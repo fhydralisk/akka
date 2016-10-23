@@ -548,6 +548,7 @@ private[akka] class RemoteActorRef private[akka] (
   def sendSystemMessage(message: SystemMessage): Unit =
     try {
       //send to remote, unless watch message is intercepted by the remoteWatcher
+      println("sending system message" + message.toString())
       message match {
         case Watch(watchee, watcher) if isWatchIntercepted(watchee, watcher) ⇒
           provider.remoteWatcher ! RemoteWatcher.WatchRemote(watchee, watcher)
