@@ -683,21 +683,21 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
       endpoints.writableEndpointWithPolicyFor(recipientAddress) match {
         case Some(Pass(endpoint, _, _)) ⇒
           endpoint ! s
-          println("remote-pass")
+          traceSend("remote-pass")
         case Some(Gated(timeOfRelease, refuseUid)) ⇒
           if (timeOfRelease.isOverdue()) createAndRegisterWritingEndpoint(refuseUid) ! s
           else extendedSystem.deadLetters ! s
-          println("remote-gated")
+          traceSend("remote-gated")
         case Some(WasGated(refuseUid)) ⇒
           createAndRegisterWritingEndpoint(refuseUid) ! s
         case Some(Quarantined(uid, _)) ⇒
           // timeOfRelease is only used for garbage collection reasons, therefore it is ignored here. We still have
           // the Quarantined tombstone and we know what UID we don't want to accept, so use it.
           createAndRegisterWritingEndpoint(refuseUid = Some(uid)) ! s
-          println("remote-quarantined")
+          traceSend("remote-quarantined")
         case None ⇒
           createAndRegisterWritingEndpoint(refuseUid = None) ! s
-          println("remote-none")
+          traceSend("remote-none")
 
       }
 
