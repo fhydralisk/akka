@@ -685,9 +685,14 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
           endpoint ! s
           traceSend("remote-pass")
         case Some(Gated(timeOfRelease, refuseUid)) ⇒
-          if (timeOfRelease.isOverdue()) createAndRegisterWritingEndpoint(refuseUid) ! s
-          else extendedSystem.deadLetters ! s
-          traceSend("remote-gated")
+          if (timeOfRelease.isOverdue()) {
+            createAndRegisterWritingEndpoint(refuseUid) ! s
+            traceSend("remote-gated - overdue")
+          }
+          else {
+            extendedSystem.deadLetters ! s
+            traceSend("remote-gated - to deadletters")
+          }
         case Some(WasGated(refuseUid)) ⇒
           createAndRegisterWritingEndpoint(refuseUid) ! s
         case Some(Quarantined(uid, _)) ⇒
