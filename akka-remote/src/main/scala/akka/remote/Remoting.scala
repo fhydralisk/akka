@@ -653,17 +653,17 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
         if (print)
           println(msg)
       }
-      implicit var print: Boolean =  message match {
-        case ActorSelectionMessage =>
+      implicit var print: Boolean = Some(message) match {
+        case Some(msg) if msg.isInstanceOf[ActorSelectionMessage] ⇒
           false
-        case Some(msg) if msg.isInstanceOf[HeartbeatMessage] =>
+        case Some(msg) if msg.isInstanceOf[HeartbeatMessage] ⇒
           false
-        case _ =>
+        case _ ⇒
           true
       }
-     
+
       traceSend("reomte-send " + message.toString() + "; remote-recipient " + recipientRef.toString())
-      
+
       val recipientAddress = recipientRef.path.address
 
       def createAndRegisterWritingEndpoint(refuseUid: Option[Int]): ActorRef =
