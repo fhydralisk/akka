@@ -649,11 +649,19 @@ private[remote] class EndpointManager(conf: Config, log: LoggingAdapter) extends
       }
 
     case s @ Send(message, senderOption, recipientRef, _) ⇒
-      def traceSend(msg: String)(implicit print:Boolean) = {
+      def traceSend(msg: String)(implicit print: Boolean) = {
         if (print)
-           println(msg)
+          println(msg)
       }
-      implicit var print:Boolean = true;
+      implicit var print: Boolean =  message match {
+        case ActorSelectionMessage =>
+          false
+        case Some(msg) if msg.isInstanceOf[HeartbeatMessage] =>
+          false
+        case _ =>
+          true
+      }
+     
       traceSend("reomte-send " + message.toString() + "; remote-recipient " + recipientRef.toString())
       
       val recipientAddress = recipientRef.path.address
