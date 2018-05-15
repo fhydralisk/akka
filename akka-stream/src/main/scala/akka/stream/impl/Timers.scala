@@ -1,10 +1,12 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import java.util.concurrent.{ TimeUnit, TimeoutException }
 
+import akka.annotation.InternalApi
 import akka.stream._
 import akka.stream.impl.Stages.DefaultAttributes
 import akka.stream.impl.fusing.GraphStages.SimpleLinearGraphStage
@@ -23,12 +25,18 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
  *  - if the timer fires before the event happens, these stages all fail the stream
  *  - otherwise, these streams do not interfere with the element flow, ordinary completion or failure
  */
-object Timers {
-  private def idleTimeoutCheckInterval(timeout: FiniteDuration): FiniteDuration = {
+@InternalApi private[akka] object Timers {
+
+  /**
+   * Given a timeout computes how often the check should be run without causing
+   * excessive load or loosing timeout precision.
+   */
+  private[akka] def timeoutCheckInterval(timeout: FiniteDuration): FiniteDuration = {
     import scala.concurrent.duration._
-    FiniteDuration(
-      math.min(math.max(timeout.toNanos / 8, 100.millis.toNanos), timeout.toNanos / 2),
-      TimeUnit.NANOSECONDS)
+    if (timeout > 1.second) 1.second
+    else {
+      FiniteDuration(math.min(math.max(timeout.toNanos / 8, 100.millis.toNanos), timeout.toNanos / 2), TimeUnit.NANOSECONDS)
+    }
   }
 
   final class Initial[T](val timeout: FiniteDuration) extends SimpleLinearGraphStage[T] {
@@ -99,7 +107,7 @@ object Timers {
           if (nextDeadline - System.nanoTime < 0)
             failStage(new TimeoutException(s"No elements passed in the last $timeout."))
 
-        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
       }
 
     override def toString = "IdleTimeout"
@@ -131,7 +139,7 @@ object Timers {
           if (waitingDemand && (nextDeadline - System.nanoTime < 0))
             failStage(new TimeoutException(s"No demand signalled in the last $timeout."))
 
-        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+        override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
       }
 
     override def toString = "BackpressureTimeout"
@@ -159,13 +167,14 @@ object Timers {
         if (nextDeadline - System.nanoTime < 0)
           failStage(new TimeoutException(s"No elements passed in the last $timeout."))
 
-      override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, idleTimeoutCheckInterval(timeout))
+      override def preStart(): Unit = schedulePeriodically(GraphStageLogicTimer, timeoutCheckInterval(timeout))
 
       class IdleBidiHandler[P](in: Inlet[P], out: Outlet[P]) extends InHandler with OutHandler {
         override def onPush(): Unit = {
           onActivity()
           push(out, grab(in))
         }
+
         override def onPull(): Unit = pull(in)
         override def onUpstreamFinish(): Unit = complete(out)
         override def onDownstreamFinish(): Unit = cancel(in)
@@ -176,11 +185,7 @@ object Timers {
 
   }
 
-  final class DelayInitial[T](val delay: FiniteDuration) extends GraphStage[FlowShape[T, T]] {
-    val in: Inlet[T] = Inlet("IdleInject.in")
-    val out: Outlet[T] = Outlet("IdleInject.out")
-    override val shape: FlowShape[T, T] = FlowShape(in, out)
-
+  final class DelayInitial[T](val delay: FiniteDuration) extends SimpleLinearGraphStage[T] {
     override def initialAttributes = DefaultAttributes.delayInitial
 
     override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =

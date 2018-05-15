@@ -1,18 +1,22 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl.io
 
 import java.io.{ IOException, InputStream }
 import java.util.concurrent.{ BlockingQueue, LinkedBlockingDeque, TimeUnit }
+
+import akka.annotation.InternalApi
 import akka.stream.Attributes.InputBuffer
 import akka.stream.impl.Stages.DefaultAttributes
 import akka.stream.impl.io.InputStreamSinkStage._
 import akka.stream.stage._
+import akka.stream.{ AbruptStageTerminationException, Attributes, Inlet, SinkShape }
 import akka.util.ByteString
+
 import scala.annotation.tailrec
 import scala.concurrent.duration.FiniteDuration
-import akka.stream.{ Inlet, SinkShape, Attributes }
 
 private[stream] object InputStreamSinkStage {
 
@@ -21,6 +25,7 @@ private[stream] object InputStreamSinkStage {
   case object Close extends AdapterToStageMessage
 
   sealed trait StreamToAdapterMessage
+  // Only non-empty ByteString is expected as Data
   case class Data(data: ByteString) extends StreamToAdapterMessage
   case object Finished extends StreamToAdapterMessage
   case object Initialized extends StreamToAdapterMessage
@@ -34,7 +39,7 @@ private[stream] object InputStreamSinkStage {
 /**
  * INTERNAL API
  */
-final private[stream] class InputStreamSinkStage(readTimeout: FiniteDuration) extends GraphStageWithMaterializedValue[SinkShape[ByteString], InputStream] {
+@InternalApi final private[stream] class InputStreamSinkStage(readTimeout: FiniteDuration) extends GraphStageWithMaterializedValue[SinkShape[ByteString], InputStream] {
 
   val in = Inlet[ByteString]("InputStreamSink.in")
   override def initialAttributes: Attributes = DefaultAttributes.inputStreamSink
@@ -47,6 +52,8 @@ final private[stream] class InputStreamSinkStage(readTimeout: FiniteDuration) ex
     val dataQueue = new LinkedBlockingDeque[StreamToAdapterMessage](maxBuffer + 2)
 
     val logic = new GraphStageLogic(shape) with StageWithCallback with InHandler {
+
+      var completionSignalled = false
 
       private val callback: AsyncCallback[AdapterToStageMessage] =
         getAsyncCallback {
@@ -68,21 +75,31 @@ final private[stream] class InputStreamSinkStage(readTimeout: FiniteDuration) ex
       def onPush(): Unit = {
         //1 is buffer for Finished or Failed callback
         require(dataQueue.remainingCapacity() > 1)
-        dataQueue.add(Data(grab(in)))
+        val bs = grab(in)
+        if (bs.nonEmpty) {
+          dataQueue.add(Data(bs))
+        }
         if (dataQueue.remainingCapacity() > 1) sendPullIfAllowed()
       }
 
       override def onUpstreamFinish(): Unit = {
         dataQueue.add(Finished)
+        completionSignalled = true
         completeStage()
       }
 
       override def onUpstreamFailure(ex: Throwable): Unit = {
         dataQueue.add(Failed(ex))
+        completionSignalled = true
         failStage(ex)
       }
 
+      override def postStop(): Unit = {
+        if (!completionSignalled) dataQueue.add(Failed(new AbruptStageTerminationException(this)))
+      }
+
       setHandler(in, this)
+
     }
 
     (logic, new InputStreamAdapter(dataQueue, logic.wakeUp, readTimeout))
@@ -93,7 +110,7 @@ final private[stream] class InputStreamSinkStage(readTimeout: FiniteDuration) ex
  * INTERNAL API
  * InputStreamAdapter that interacts with InputStreamSinkStage
  */
-private[akka] class InputStreamAdapter(
+@InternalApi private[akka] class InputStreamAdapter(
   sharedBuffer: BlockingQueue[StreamToAdapterMessage],
   sendToStage:  (AdapterToStageMessage) ⇒ Unit,
   readTimeout:  FiniteDuration)
@@ -102,7 +119,7 @@ private[akka] class InputStreamAdapter(
   var isInitialized = false
   var isActive = true
   var isStageAlive = true
-  val subscriberClosedException = new IOException("Reactive stream is terminated, no reads are possible")
+  def subscriberClosedException = new IOException("Reactive stream is terminated, no reads are possible")
   var detachedChunk: Option[ByteString] = None
 
   @scala.throws(classOf[IOException])
@@ -114,9 +131,12 @@ private[akka] class InputStreamAdapter(
 
   @scala.throws(classOf[IOException])
   override def read(): Int = {
-    val a = Array[Byte](1)
-    if (read(a, 0, 1) != -1) a(0)
-    else -1
+    val a = new Array[Byte](1)
+    read(a, 0, 1) match {
+      case 1   ⇒ a(0) & 0xff
+      case -1  ⇒ -1
+      case len ⇒ throw new IllegalStateException(s"Invalid length [$len]")
+    }
   }
 
   @scala.throws(classOf[IOException])
@@ -199,7 +219,8 @@ private[akka] class InputStreamAdapter(
     if (!isInitialized) {
       sharedBuffer.poll(readTimeout.toMillis, TimeUnit.MILLISECONDS) match {
         case Initialized ⇒ isInitialized = true
-        case _           ⇒ require(false, "First message must be Initialized notification")
+        case null        ⇒ throw new IOException(s"Timeout after $readTimeout waiting for Initialized message from stage")
+        case entry       ⇒ require(false, s"First message must be Initialized notification, got $entry")
       }
     }
   }

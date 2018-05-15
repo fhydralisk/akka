@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
@@ -10,11 +10,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 import akka.ConfigurationException
 import akka.actor._
+import akka.annotation.InternalApi
+import akka.cluster.ClusterSettings.DataCenter
 import akka.dispatch.MonitorableThreadFactory
 import akka.event.{ Logging, LoggingAdapter }
 import akka.japi.Util
 import akka.pattern._
-import akka.remote.{ DefaultFailureDetectorRegistry, FailureDetector, _ }
+import akka.remote.{ DefaultFailureDetectorRegistry, _ }
 import com.typesafe.config.{ Config, ConfigFactory }
 
 import scala.annotation.varargs
@@ -60,6 +62,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
   import InfoLogger._
   import settings._
 
+  private val joinConfigCompatChecker: JoinConfigCompatChecker = JoinConfigCompatChecker.load(system, settings)
   /**
    * The address including a `uid` of this cluster member.
    * The `uid` is needed to be able to distinguish different
@@ -76,6 +79,9 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
    * The address of this cluster member.
    */
   def selfAddress: Address = selfUniqueAddress.address
+
+  /** Data center to which this node belongs to (defaults to "default" if not configured explicitly) */
+  def selfDataCenter: DataCenter = settings.SelfDataCenter
 
   /**
    * roles that this member has
@@ -96,10 +102,19 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
   logInfo("Starting up...")
 
   val failureDetector: FailureDetectorRegistry[Address] = {
-    def createFailureDetector(): FailureDetector =
+    val createFailureDetector = () ⇒
       FailureDetectorLoader.load(settings.FailureDetectorImplementationClass, settings.FailureDetectorConfig, system)
 
-    new DefaultFailureDetectorRegistry(() ⇒ createFailureDetector())
+    new DefaultFailureDetectorRegistry(createFailureDetector)
+  }
+
+  val crossDcFailureDetector: FailureDetectorRegistry[Address] = {
+    val createFailureDetector = () ⇒
+      FailureDetectorLoader.load(
+        settings.MultiDataCenter.CrossDcFailureDetectorSettings.ImplementationClass,
+        settings.MultiDataCenter.CrossDcFailureDetectorSettings.config, system)
+
+    new DefaultFailureDetectorRegistry(createFailureDetector)
   }
 
   // needs to be lazy to allow downing provider impls to access Cluster (if not we get deadlock)
@@ -153,7 +168,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
 
   // create supervisor for daemons under path "/system/cluster"
   private val clusterDaemons: ActorRef = {
-    system.systemActorOf(Props(classOf[ClusterDaemon], settings).
+    system.systemActorOf(Props(classOf[ClusterDaemon], settings, joinConfigCompatChecker).
       withDispatcher(UseDispatcher).withDeploy(Deploy.local), name = "cluster")
   }
 
@@ -201,6 +216,11 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
    * Current snapshot state of the cluster.
    */
   def state: CurrentClusterState = readView.state
+
+  /**
+   * Current snapshot of the member itself
+   */
+  def selfMember: Member = readView.self
 
   /**
    * Subscribe to one or more cluster domain events.
@@ -391,7 +411,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
    * Should not called by the user. The user can issue a LEAVE command which will tell the node
    * to go through graceful handoff process `LEAVE -&gt; EXITING -&gt; REMOVED -&gt; SHUTDOWN`.
    */
-  private[cluster] def shutdown(): Unit = {
+  @InternalApi private[cluster] def shutdown(): Unit = {
     if (_isTerminated.compareAndSet(false, true)) {
       logInfo("Shutting down...")
 
@@ -411,7 +431,7 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
 
   private def closeScheduler(): Unit = scheduler match {
     case x: Closeable ⇒ x.close()
-    case _            ⇒
+    case _            ⇒ // ignore, this is fine
   }
 
   /**
@@ -420,13 +440,32 @@ class Cluster(val system: ExtendedActorSystem) extends Extension {
   private[cluster] object InfoLogger {
 
     def logInfo(message: String): Unit =
-      if (LogInfo) log.info("Cluster Node [{}] - {}", selfAddress, message)
+      if (LogInfo)
+        if (settings.SelfDataCenter == ClusterSettings.DefaultDataCenter)
+          log.info("Cluster Node [{}] - {}", selfAddress, message)
+        else
+          log.info("Cluster Node [{}] dc [{}] - {}", selfAddress, settings.SelfDataCenter, message)
 
     def logInfo(template: String, arg1: Any): Unit =
-      if (LogInfo) log.info("Cluster Node [{}] - " + template, selfAddress, arg1)
+      if (LogInfo)
+        if (settings.SelfDataCenter == ClusterSettings.DefaultDataCenter)
+          log.info("Cluster Node [{}] - " + template, selfAddress, arg1)
+        else
+          log.info("Cluster Node [{}] dc [{}] - " + template, selfAddress, settings.SelfDataCenter, arg1)
 
     def logInfo(template: String, arg1: Any, arg2: Any): Unit =
-      if (LogInfo) log.info("Cluster Node [{}] - " + template, selfAddress, arg1, arg2)
+      if (LogInfo)
+        if (settings.SelfDataCenter == ClusterSettings.DefaultDataCenter)
+          log.info("Cluster Node [{}] - " + template, selfAddress, arg1, arg2)
+        else
+          log.info("Cluster Node [{}] dc [{}] - " + template, selfAddress, settings.SelfDataCenter, arg1, arg2)
+
+    def logInfo(template: String, arg1: Any, arg2: Any, arg3: Any): Unit =
+      if (LogInfo)
+        if (settings.SelfDataCenter == ClusterSettings.DefaultDataCenter)
+          log.info("Cluster Node [{}] - " + template, selfAddress, arg1, arg2, arg3)
+        else
+          log.info("Cluster Node [{}] dc [" + settings.SelfDataCenter + "] - " + template, selfAddress, arg1, arg2, arg3)
   }
 
 }

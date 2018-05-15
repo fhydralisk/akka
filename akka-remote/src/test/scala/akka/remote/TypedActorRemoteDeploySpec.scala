@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.testkit.AkkaSpec
@@ -8,6 +9,7 @@ import com.typesafe.config._
 import scala.concurrent.{ Await, Future }
 import TypedActorRemoteDeploySpec._
 import akka.actor.{ Deploy, ActorSystem, TypedProps, TypedActor }
+import akka.util.IgnoreForScala212
 import scala.concurrent.duration._
 
 object TypedActorRemoteDeploySpec {
@@ -46,11 +48,11 @@ class TypedActorRemoteDeploySpec extends AkkaSpec(conf) {
 
   "Typed actors" must {
 
-    "be possible to deploy remotely and communicate with" in {
+    "be possible to deploy remotely and communicate with" taggedAs IgnoreForScala212 in {
       verify({ _.getName }, remoteName)
     }
 
-    "be possible to deploy remotely and be able to dereference self" in {
+    "be possible to deploy remotely and be able to dereference self" taggedAs IgnoreForScala212 in {
       verify({ _.getNameSelfDeref }, remoteName)
     }
 

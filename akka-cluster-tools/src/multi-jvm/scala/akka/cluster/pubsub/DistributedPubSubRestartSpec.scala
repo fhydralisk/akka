@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.pubsub
 
 import language.postfixOps
@@ -122,8 +123,9 @@ class DistributedPubSubRestartSpec extends MultiNodeSpec(DistributedPubSubRestar
 
         within(20.seconds) {
           awaitAssert {
-            system.actorSelection(RootActorPath(thirdAddress) / "user" / "shutdown") ! Identify(None)
-            expectMsgType[ActorIdentity](1.second).ref.get
+            val p = TestProbe()
+            system.actorSelection(RootActorPath(thirdAddress) / "user" / "shutdown").tell(Identify(None), p.ref)
+            p.expectMsgType[ActorIdentity](1.second).ref.get
           }
         }
 
@@ -141,9 +143,10 @@ class DistributedPubSubRestartSpec extends MultiNodeSpec(DistributedPubSubRestar
         val newSystem = {
           val port = Cluster(system).selfAddress.port.get
           val config = ConfigFactory.parseString(
-            if (RARP(system).provider.remoteSettings.Artery.Enabled) s"akka.remote.artery.canonical.port=$port"
-            else s"akka.remote.netty.tcp.port=$port"
-          ).withFallback(system.settings.config)
+            s"""
+              akka.remote.artery.canonical.port=$port
+              akka.remote.netty.tcp.port=$port
+              """).withFallback(system.settings.config)
 
           ActorSystem(system.name, config)
         }
@@ -162,7 +165,7 @@ class DistributedPubSubRestartSpec extends MultiNodeSpec(DistributedPubSubRestar
           probe.expectMsg(0L)
 
           newSystem.actorOf(Props[Shutdown], "shutdown")
-          Await.ready(newSystem.whenTerminated, 10.seconds)
+          Await.ready(newSystem.whenTerminated, 20.seconds)
         } finally newSystem.terminate()
       }
 

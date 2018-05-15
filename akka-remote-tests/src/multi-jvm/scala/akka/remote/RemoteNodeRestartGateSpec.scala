@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.remote.transport.AssociationHandle
@@ -89,7 +90,7 @@ abstract class RemoteNodeRestartGateSpec
       }
 
       runOn(second) {
-        val addr = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
+        val address = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
         val firstAddress = node(first).address
 
         enterBarrier("gated")
@@ -99,8 +100,8 @@ abstract class RemoteNodeRestartGateSpec
         val freshSystem = ActorSystem(system.name, ConfigFactory.parseString(s"""
                     akka.remote.retry-gate-closed-for = 0.5 s
                     akka.remote.netty.tcp {
-                      hostname = ${addr.host.get}
-                      port = ${addr.port.get}
+                      hostname = ${address.host.get}
+                      port = ${address.port.get}
                     }
                     """).withFallback(system.settings.config))
 

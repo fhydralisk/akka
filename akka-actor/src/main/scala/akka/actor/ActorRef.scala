@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -7,13 +7,15 @@ package akka.actor
 import scala.collection.immutable
 import akka.dispatch._
 import akka.dispatch.sysmsg._
-import java.lang.{ UnsupportedOperationException, IllegalStateException }
-import akka.serialization.{ Serialization, JavaSerializer }
-import akka.event.EventStream
+import java.lang.{ IllegalStateException, UnsupportedOperationException }
+
+import akka.serialization.{ JavaSerializer, Serialization }
+import akka.event.{ EventStream, Logging, MarkerLoggingAdapter }
+
 import scala.annotation.tailrec
 import java.util.concurrent.ConcurrentHashMap
-import akka.event.{ Logging, LoggingAdapter }
 import java.util.concurrent.atomic.AtomicReference
+
 import scala.util.control.NonFatal
 
 object ActorRef {
@@ -63,29 +65,23 @@ object ActorRef {
  * import static akka.pattern.Patterns.ask;
  * import static akka.pattern.Patterns.pipe;
  *
- * public class ExampleActor extends UntypedActor {
+ * public class ExampleActor extends AbstractActor {
  *   // this child will be destroyed and re-created upon restart by default
  *   final ActorRef other = getContext().actorOf(Props.create(OtherActor.class), "childName");
- *
  *   @Override
- *   public void onReceive(Object o) {
- *     if (o instanceof Request1) {
- *       Msg msg = ((Request1) o).getMsg();
- *       other.tell(msg, getSelf()); // uses this actor as sender reference, reply goes to us
- *
- *     } else if (o instanceof Request2) {
- *       Msg msg = ((Request2) o).getMsg();
- *       other.tell(msg, getSender()); // forward sender reference, enabling direct reply
- *
- *     } else if (o instanceof Request3) {
- *       Msg msg = ((Request3) o).getMsg();
- *       pipe(ask(other, msg, 5000), context().dispatcher()).to(getSender());
- *       // the ask call will get a future from other's reply
- *       // when the future is complete, send its value to the original sender
- *
- *     } else {
- *       unhandled(o);
- *     }
+ *   public Receive createReceive() {
+ *     return receiveBuilder()
+ *       .match(Request1.class, msg ->
+ *         // uses this actor as sender reference, reply goes to us
+ *         other.tell(msg, getSelf()))
+ *       .match(Request2.class, msg ->
+ *         // forward sender reference, enabling direct reply
+ *         other.tell(msg, getSender()))
+ *       .match(Request3.class, msg ->
+ *         // the ask call will get a future from other's reply
+ *         // when the future is complete, send its value to the original sender
+ *         pipe(ask(other, msg, 5000), context().dispatcher()).to(getSender()))
+ *       .build();
  *   }
  * }
  * }}}
@@ -163,7 +159,7 @@ abstract class ActorRef extends java.lang.Comparable[ActorRef] with Serializable
 
 /**
  * This trait represents the Scala Actor API
- * There are implicit conversions in ../actor/Implicits.scala
+ * There are implicit conversions in package.scala
  * from ActorRef -&gt; ScalaActorRef and back
  */
 trait ScalaActorRef { ref: ActorRef ⇒
@@ -476,7 +472,9 @@ sealed trait AllDeadLetters {
 
 /**
  * When a message is sent to an Actor that is terminated before receiving the message, it will be sent as a DeadLetter
- * to the ActorSystem's EventStream
+ * to the ActorSystem's EventStream.
+ *
+ * When this message was sent without a sender [[ActorRef]], `sender` will be `system.deadLetters`.
  */
 @SerialVersionUID(1L)
 final case class DeadLetter(message: Any, sender: ActorRef, recipient: ActorRef) extends AllDeadLetters {
@@ -532,7 +530,7 @@ private[akka] class EmptyLocalActorRef(
   }
 
   override def !(message: Any)(implicit sender: ActorRef = Actor.noSender): Unit = message match {
-    case null ⇒ throw new InvalidMessageException("Message is null")
+    case null ⇒ throw InvalidMessageException("Message is null")
     case d: DeadLetter ⇒
       specialHandle(d.message, d.sender) // do NOT form endless loops, since deadLetters will resend!
     case _ if !specialHandle(message, sender) ⇒
@@ -577,7 +575,7 @@ private[akka] class DeadLetterActorRef(
   _eventStream: EventStream) extends EmptyLocalActorRef(_provider, _path, _eventStream) {
 
   override def !(message: Any)(implicit sender: ActorRef = this): Unit = message match {
-    case null                ⇒ throw new InvalidMessageException("Message is null")
+    case null                ⇒ throw InvalidMessageException("Message is null")
     case Identify(messageId) ⇒ sender ! ActorIdentity(messageId, None)
     case d: DeadLetter       ⇒ if (!specialHandle(d.message, d.sender)) eventStream.publish(d)
     case _ ⇒ if (!specialHandle(message, sender))
@@ -606,7 +604,7 @@ private[akka] class VirtualPathContainer(
   override val provider:  ActorRefProvider,
   override val path:      ActorPath,
   override val getParent: InternalActorRef,
-  val log:                LoggingAdapter) extends MinimalActorRef {
+  val log:                MarkerLoggingAdapter) extends MinimalActorRef {
 
   private val children = new ConcurrentHashMap[String, InternalActorRef]
 
@@ -722,7 +720,7 @@ private[akka] final class FunctionRef(
       case w: Watch   ⇒ addWatcher(w.watchee, w.watcher)
       case u: Unwatch ⇒ remWatcher(u.watchee, u.watcher)
       case DeathWatchNotification(actorRef, _, _) ⇒
-        this.!(Terminated(actorRef)(existenceConfirmed = true, addressTerminated = false))
+        this.!(Terminated(actorRef)(existenceConfirmed = true, addressTerminated = false))(actorRef)
       case _ ⇒ //ignore all other messages
     }
   }

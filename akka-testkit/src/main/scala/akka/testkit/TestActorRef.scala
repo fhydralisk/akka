@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.testkit
@@ -86,7 +86,7 @@ class TestActorRef[T <: Actor](
    */
   def underlyingActor: T = {
     // volatile mailbox read to bring in actor field
-    if (isTerminated) throw new IllegalActorStateException("underlying actor is terminated")
+    if (isTerminated) throw IllegalActorStateException("underlying actor is terminated")
     underlying.actor.asInstanceOf[T] match {
       case null ⇒
         val t = TestKitExtension(_system).DefaultTimeout

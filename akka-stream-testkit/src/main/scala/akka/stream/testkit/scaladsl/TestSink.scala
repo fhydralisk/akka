@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.testkit.scaladsl
 
 import akka.actor.ActorSystem
@@ -19,6 +20,6 @@ object TestSink {
    * A Sink that materialized to a [[akka.stream.testkit.TestSubscriber.Probe]].
    */
   def probe[T](implicit system: ActorSystem): Sink[T, Probe[T]] =
-    new Sink[T, TestSubscriber.Probe[T]](new StreamTestKit.ProbeSink(none, SinkShape(Inlet("ProbeSink.in"))))
+    Sink.fromGraph[T, TestSubscriber.Probe[T]](new StreamTestKit.ProbeSink(none, SinkShape(Inlet("ProbeSink.in"))))
 
 }

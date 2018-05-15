@@ -1,14 +1,18 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.event;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
 import akka.testkit.AkkaJUnitActorSystemResource;
-import akka.testkit.JavaTestKit;
 import akka.event.Logging.Error;
 import akka.event.ActorWithMDC.Log;
 import static akka.event.Logging.*;
 
+import akka.testkit.javadsl.TestKit;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import org.junit.Before;
@@ -120,7 +124,7 @@ public class LoggingAdapterTest extends JUnitSuite {
         assertNotNull(new Debug("logSource", this.getClass(), "The message"));
     }
 
-    private static class LogJavaTestKit extends JavaTestKit {
+    private static class LogJavaTestKit extends TestKit {
 
         private static final String emptyMDC = "{}";
 
@@ -141,20 +145,17 @@ public class LoggingAdapterTest extends JUnitSuite {
         }
 
         void expectLog(final Object level, final String message, final Throwable cause, final String mdc) {
-            new ExpectMsg<Void>(Duration.create(3, TimeUnit.SECONDS), "LogEvent") {
-                @Override
-                protected Void match(Object event) {
-                    LogEvent log = (LogEvent) event;
-                    assertEquals(message, log.message());
-                    assertEquals(level, log.level());
-                    assertEquals(mdc, log.getMDC().toString());
-                    if(cause != null) {
-                        Error error = (Error) log;
-                        assertSame(cause, error.cause());
-                    }
-                    return null;
+            expectMsgPF(Duration.create(3, TimeUnit.SECONDS), "LogEvent", event -> {
+                LogEvent log = (LogEvent) event;
+                assertEquals(message, log.message());
+                assertEquals(level, log.level());
+                assertEquals(mdc, log.getMDC().toString());
+                if(cause != null) {
+                    Error error = (Error) log;
+                    assertSame(cause, error.cause());
                 }
-            };
+                return null;
+            });
         }
     }
 }

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.serialization
 
 import scala.collection.immutable
@@ -12,21 +13,11 @@ import akka.actor.SelectChildPattern
 import akka.actor.SelectParent
 import akka.actor.SelectionPathElement
 import akka.remote.ContainerFormats
-import akka.serialization.SerializationExtension
-import akka.serialization.BaseSerializer
-import akka.serialization.SerializerWithStringManifest
+import akka.serialization.{ BaseSerializer, SerializationExtension, Serializers }
 
 class MessageContainerSerializer(val system: ExtendedActorSystem) extends BaseSerializer {
 
-  @deprecated("Use constructor with ExtendedActorSystem", "2.4")
-  def this() = this(null)
-
   private lazy val serialization = SerializationExtension(system)
-
-  // TODO remove this when deprecated this() is removed
-  override val identifier: Int =
-    if (system eq null) 6
-    else identifierFromConfig
 
   def includeManifest: Boolean = false
 
@@ -46,15 +37,8 @@ class MessageContainerSerializer(val system: ExtendedActorSystem) extends BaseSe
       setSerializerId(serializer.identifier).
       setWildcardFanOut(sel.wildcardFanOut)
 
-    serializer match {
-      case ser2: SerializerWithStringManifest ⇒
-        val manifest = ser2.manifest(message)
-        if (manifest != "")
-          builder.setMessageManifest(ByteString.copyFromUtf8(manifest))
-      case _ ⇒
-        if (serializer.includeManifest)
-          builder.setMessageManifest(ByteString.copyFromUtf8(message.getClass.getName))
-    }
+    val ms = Serializers.manifestFor(serializer, message)
+    if (ms.nonEmpty) builder.setMessageManifest(ByteString.copyFromUtf8(ms))
 
     sel.elements.foreach {
       case SelectChildName(name) ⇒

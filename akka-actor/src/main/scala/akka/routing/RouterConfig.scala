@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import scala.collection.immutable
@@ -128,15 +129,6 @@ private[akka] trait PoolOverrideUnsetConfig[T <: Pool] extends Pool {
  * Java API: Base class for custom router [[Group]]
  */
 abstract class GroupBase extends Group {
-  @deprecated("Implement getPaths with ActorSystem parameter instead", "2.4")
-  def getPaths: java.lang.Iterable[String] = null
-
-  @deprecated("Use paths with ActorSystem parameter instead", "2.4")
-  override final def paths: immutable.Iterable[String] = {
-    val tmp = getPaths
-    if (tmp != null) immutableSeq(tmp)
-    else null
-  }
 
   def getPaths(system: ActorSystem): java.lang.Iterable[String]
 
@@ -150,9 +142,6 @@ abstract class GroupBase extends Group {
  * without watching for termination.
  */
 trait Group extends RouterConfig {
-
-  @deprecated("Implement paths with ActorSystem parameter instead", "2.4")
-  def paths: immutable.Iterable[String] = null
 
   def paths(system: ActorSystem): immutable.Iterable[String]
 
@@ -190,9 +179,6 @@ abstract class PoolBase extends Pool
  * them from the router if they terminate.
  */
 trait Pool extends RouterConfig {
-
-  @deprecated("Implement nrOfInstances with ActorSystem parameter instead", "2.4")
-  def nrOfInstances: Int = -1
 
   /**
    * Initial number of routee instances

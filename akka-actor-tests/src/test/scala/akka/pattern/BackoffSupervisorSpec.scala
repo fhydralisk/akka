@@ -1,14 +1,15 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.pattern
 
-import scala.concurrent.duration._
 import akka.actor._
 import akka.testkit._
+import org.scalatest.prop.TableDrivenPropertyChecks._
+
+import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-import akka.actor.SupervisorStrategy
 
 object BackoffSupervisorSpec {
 
@@ -172,6 +173,73 @@ class BackoffSupervisorSpec extends AkkaSpec with ImplicitSender {
           create(onFailureOptions(ManualChild.props(testActor))
             .withManualReset
             .withSupervisorStrategy(restartingStrategy)))
+      }
+    }
+
+    "reply to sender if replyWhileStopped is specified" in {
+      filterException[TestException] {
+        val supervisor = create(Backoff.onFailure(Child.props(testActor), "c1", 100.seconds, 300.seconds, 0.2).withReplyWhileStopped("child was stopped"))
+        supervisor ! BackoffSupervisor.GetCurrentChild
+        val c1 = expectMsgType[BackoffSupervisor.CurrentChild].ref.get
+        watch(c1)
+        supervisor ! BackoffSupervisor.GetRestartCount
+        expectMsg(BackoffSupervisor.RestartCount(0))
+
+        c1 ! "boom"
+        expectTerminated(c1)
+
+        awaitAssert {
+          supervisor ! BackoffSupervisor.GetRestartCount
+          expectMsg(BackoffSupervisor.RestartCount(1))
+        }
+
+        supervisor ! "boom"
+        expectMsg("child was stopped")
+      }
+    }
+
+    "not reply to sender if replyWhileStopped is NOT specified" in {
+      filterException[TestException] {
+        val supervisor = create(Backoff.onFailure(Child.props(testActor), "c1", 100.seconds, 300.seconds, 0.2))
+        supervisor ! BackoffSupervisor.GetCurrentChild
+        val c1 = expectMsgType[BackoffSupervisor.CurrentChild].ref.get
+        watch(c1)
+        supervisor ! BackoffSupervisor.GetRestartCount
+        expectMsg(BackoffSupervisor.RestartCount(0))
+
+        c1 ! "boom"
+        expectTerminated(c1)
+
+        awaitAssert {
+          supervisor ! BackoffSupervisor.GetRestartCount
+          expectMsg(BackoffSupervisor.RestartCount(1))
+        }
+
+        supervisor ! "boom" //this will be sent to deadLetters
+        expectNoMsg(500.milliseconds)
+      }
+    }
+
+    "correctly calculate the delay" in {
+      val delayTable =
+        Table(
+          ("restartCount", "minBackoff", "maxBackoff", "randomFactor", "expectedResult"),
+          (0, 0.minutes, 0.minutes, 0d, 0.minutes),
+          (0, 5.minutes, 7.minutes, 0d, 5.minutes),
+          (2, 5.seconds, 7.seconds, 0d, 7.seconds),
+          (2, 5.seconds, 7.days, 0d, 20.seconds),
+          (29, 5.minutes, 10.minutes, 0d, 10.minutes),
+          (29, 10000.days, 10000.days, 0d, 10000.days),
+          (Int.MaxValue, 10000.days, 10000.days, 0d, 10000.days))
+      forAll(delayTable) { (
+        restartCount: Int,
+        minBackoff: FiniteDuration,
+        maxBackoff: FiniteDuration,
+        randomFactor: Double,
+        expectedResult: FiniteDuration) ⇒
+
+        val calculatedValue = BackoffSupervisor.calculateDelay(restartCount, minBackoff, maxBackoff, randomFactor)
+        assert(calculatedValue === expectedResult)
       }
     }
   }

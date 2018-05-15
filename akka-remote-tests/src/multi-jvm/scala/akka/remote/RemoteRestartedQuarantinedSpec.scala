@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.remote.transport.AssociationHandle
@@ -26,9 +27,6 @@ object RemoteRestartedQuarantinedSpec extends MultiNodeConfig {
 
   commonConfig(debugConfig(on = false).withFallback(
     ConfigFactory.parseString("""
-      akka.loglevel = WARNING
-      akka.remote.log-remote-lifecycle-events = WARNING
-
       # Keep it long, we don't want reconnects
       akka.remote.retry-gate-closed-for  = 1 s
 
@@ -97,7 +95,7 @@ abstract class RemoteRestartedQuarantinedSpec
       }
 
       runOn(second) {
-        val addr = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
+        val address = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
         val firstAddress = node(first).address
         system.eventStream.subscribe(testActor, classOf[ThisActorSystemQuarantinedEvent])
 
@@ -125,18 +123,18 @@ abstract class RemoteRestartedQuarantinedSpec
         val freshSystem = ActorSystem(system.name, ConfigFactory.parseString(s"""
                     akka.remote.retry-gate-closed-for = 0.5 s
                     akka.remote.netty.tcp {
-                      hostname = ${addr.host.get}
-                      port = ${addr.port.get}
+                      hostname = ${address.host.get}
+                      port = ${address.port.get}
                     }
                     """).withFallback(system.settings.config))
 
+        // retry because it's possible to loose the initial message here, see issue #17314
         val probe = TestProbe()(freshSystem)
-
-        freshSystem.actorSelection(RootActorPath(firstAddress) / "user" / "subject").tell(Identify("subject"), probe.ref)
-        // TODO sometimes it takes long time until the new connection is established,
-        //      It seems like there must first be a transport failure detector timeout, that triggers
-        //      "No response from remote. Handshake timed out or transport failure detector triggered".
-        probe.expectMsgType[ActorIdentity](30.second).ref should not be (None)
+        probe.awaitAssert({
+          println(s"# --") // FIXME
+          freshSystem.actorSelection(RootActorPath(firstAddress) / "user" / "subject").tell(Identify("subject"), probe.ref)
+          probe.expectMsgType[ActorIdentity](1.second).ref should not be (None)
+        }, 30.seconds)
 
         // Now the other system will be able to pass, too
         freshSystem.actorOf(Props[Subject], "subject")

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2014-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.NotUsed
@@ -10,12 +11,12 @@ import akka.stream.Supervision.{ restartingDecider, resumingDecider }
 import akka.stream.impl.ReactiveStreamsCompliance
 import akka.stream.testkit.Utils._
 import akka.stream.testkit._
-import akka.testkit.TestLatch
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
 import scala.concurrent.duration._
 import scala.concurrent.{ Await, Future }
 import scala.util.control.NoStackTrace
+import akka.testkit.LongRunningTest
 
 class FlowFoldAsyncSpec extends StreamSpec {
   implicit val materializer = ActorMaterializer()
@@ -43,7 +44,7 @@ class FlowFoldAsyncSpec extends StreamSpec {
       inputSource.runWith(foldSink).futureValue(timeout) should ===(expected)
     }
 
-    "work when using Flow.foldAsync" in assertAllStagesStopped {
+    "work when using Flow.foldAsync" taggedAs LongRunningTest in assertAllStagesStopped {
       val flowTimeout =
         Timeout((flowDelayMS * input.size).milliseconds + 3.seconds)
 
@@ -57,13 +58,13 @@ class FlowFoldAsyncSpec extends StreamSpec {
     }
 
     "propagate an error" in assertAllStagesStopped {
-      val error = new Exception with NoStackTrace
+      val error = TE("Boom!")
       val future = inputSource.map(x ⇒ if (x > 50) throw error else x).runFoldAsync[NotUsed](NotUsed)(noneAsync)
       the[Exception] thrownBy Await.result(future, 3.seconds) should be(error)
     }
 
     "complete future with failure when folding function throws" in assertAllStagesStopped {
-      val error = new Exception with NoStackTrace
+      val error = TE("Boom!")
       val future = inputSource.runFoldAsync(0) { (x, y) ⇒
         if (x > 50) Future.failed(error) else Future(x + y)
       }
@@ -99,22 +100,16 @@ class FlowFoldAsyncSpec extends StreamSpec {
     }
 
     "signal error from foldAsync" in assertAllStagesStopped {
-      val latch = TestLatch(1)
-      val c = TestSubscriber.manualProbe[Int]()
+      val probe = TestSubscriber.probe[Int]()
       implicit val ec = system.dispatcher
-      val p = Source(1 to 5).mapAsync(4)(n ⇒
+      Source(1 to 5).foldAsync(0) { (_, n) ⇒
         if (n == 3) throw new RuntimeException("err2") with NoStackTrace
-        else {
-          Future {
-            Await.ready(latch, 10.seconds)
-            n
-          }
-        }).
-        to(Sink.fromSubscriber(c)).run()
-      val sub = c.expectSubscription()
+        Future(n + 1)
+      }.to(Sink.fromSubscriber(probe)).run()
+
+      val sub = probe.expectSubscription()
       sub.request(10)
-      c.expectError().getMessage should be("err2")
-      latch.countDown()
+      probe.expectError().getMessage should be("err2")
     }
 
     "resume after future failure" in assertAllStagesStopped {
@@ -162,7 +157,7 @@ class FlowFoldAsyncSpec extends StreamSpec {
         Future.failed(Utils.TE("failure5")),
         Future.successful("happy!"))
 
-      Source(futures).mapAsync(2)(identity).
+      Source(futures).foldAsync("") { (_, s) ⇒ s }.
         withAttributes(supervisionStrategy(resumingDecider)).runWith(Sink.head).
         futureValue(timeout) should ===("happy!")
     }

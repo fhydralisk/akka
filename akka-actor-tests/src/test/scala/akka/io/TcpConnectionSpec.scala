@@ -1,11 +1,11 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.io
 
-import java.io.{ File, IOException }
-import java.net.{ InetSocketAddress, ServerSocket, URLClassLoader }
+import java.io.IOException
+import java.net.{ InetSocketAddress, ServerSocket }
 import java.nio.ByteBuffer
 import java.nio.channels._
 import java.nio.channels.spi.SelectorProvider
@@ -26,6 +26,10 @@ import akka.testkit.{ AkkaSpec, EventFilter, SocketUtil, TestActorRef, TestProbe
 import akka.util.{ ByteString, Helpers }
 import akka.testkit.SocketUtil._
 import java.util.Random
+import java.net.SocketTimeoutException
+import java.nio.file.Files
+
+import com.google.common.jimfs.{ Configuration, Jimfs }
 
 object TcpConnectionSpec {
   case class Ack(i: Int) extends Event
@@ -128,7 +132,7 @@ class TcpConnectionSpec extends AkkaSpec("""
           val wrote = serverSideChannel.write(buffer)
           wrote should ===(DataSize)
 
-          expectNoMsg(1000.millis) // data should have been transferred fully by now
+          expectNoMessage(1000.millis) // data should have been transferred fully by now
 
           selector.send(connectionActor, ChannelReadable)
 
@@ -167,14 +171,14 @@ class TcpConnectionSpec extends AkkaSpec("""
         writer.expectMsg(Ack)
         pullFromServerSide(remaining = 8, into = buffer)
         buffer.flip()
-        buffer.limit should ===(8)
+        buffer.limit() should ===(8)
 
         // not reply to write commander for writes without Ack
         val unackedWrite = Write(ByteString("morestuff!"))
         buffer.clear()
         serverSideChannel.read(buffer) should ===(0)
         writer.send(connectionActor, unackedWrite)
-        writer.expectNoMsg(500.millis)
+        writer.expectNoMessage(500.millis)
         pullFromServerSide(remaining = 10, into = buffer)
         buffer.flip()
         ByteString(buffer).utf8String should ===("morestuff!")
@@ -197,7 +201,7 @@ class TcpConnectionSpec extends AkkaSpec("""
         writer.send(connectionActor, write)
         pullFromServerSide(remaining = bufferSize, into = buffer)
         buffer.flip()
-        buffer.limit should ===(bufferSize)
+        buffer.limit() should ===(bufferSize)
 
         ByteString(buffer) should ===(testData)
       }
@@ -207,7 +211,7 @@ class TcpConnectionSpec extends AkkaSpec("""
       run {
         val writer = TestProbe()
         writer.send(connectionActor, Write(ByteString(42.toByte)))
-        writer.expectNoMsg(500.millis)
+        writer.expectNoMessage(500.millis)
       }
     }
 
@@ -223,31 +227,33 @@ class TcpConnectionSpec extends AkkaSpec("""
       run {
         val writer = TestProbe()
         writer.send(connectionActor, Write(ByteString.empty, NoAck))
-        writer.expectNoMsg(250.millis)
+        writer.expectNoMessage(250.millis)
         writer.send(connectionActor, Write(ByteString.empty, NoAck(42)))
-        writer.expectNoMsg(250.millis)
+        writer.expectNoMessage(250.millis)
       }
     }
 
     "write file to network" in new EstablishedConnectionTest() {
       run {
-        // hacky: we need a file for testing purposes, so try to get the biggest one from our own classpath
-        val testFile =
-          classOf[TcpConnectionSpec].getClassLoader.asInstanceOf[URLClassLoader]
-            .getURLs
-            .filter(_.getProtocol == "file")
-            .map(url ⇒ new File(url.toURI))
-            .filter(_.exists)
-            .sortBy(-_.length)
-            .head
-
-        // maximum of 100 MB
-        val size = math.min(testFile.length(), 100000000).toInt
-
-        val writer = TestProbe()
-        writer.send(connectionActor, WriteFile(testFile.getAbsolutePath, 0, size, Ack))
-        pullFromServerSide(size, 1000000)
-        writer.expectMsg(Ack)
+        val fs = Jimfs.newFileSystem("write-file-in-network", Configuration.unix())
+        val tmpFile = Files.createTempFile(fs.getPath("/"), "whatever", ".dat")
+        val writer = Files.newBufferedWriter(tmpFile)
+        val oneKByteOfF = Array.fill[Char](1000)('F')
+        // 10 mb of f:s in a file
+        for (_ ← 0 to 10000) {
+          writer.write(oneKByteOfF)
+        }
+        writer.flush()
+        writer.close()
+        try {
+          val writer = TestProbe()
+          val size = Files.size(tmpFile).toInt
+          writer.send(connectionActor, WritePath(tmpFile, 0, size, Ack))
+          pullFromServerSide(size, 1000000)
+          writer.expectMsg(Ack)
+        } finally {
+          fs.close()
+        }
       }
     }
 
@@ -348,8 +354,8 @@ class TcpConnectionSpec extends AkkaSpec("""
         selector.send(connectionActor, ChannelReadable)
 
         // this ChannelReadable should be properly ignored, even if data is already pending
-        interestCallReceiver.expectNoMsg(100.millis)
-        connectionHandler.expectNoMsg(100.millis)
+        interestCallReceiver.expectNoMessage(100.millis)
+        connectionHandler.expectNoMessage(100.millis)
 
         connectionHandler.send(connectionActor, ResumeReading)
         interestCallReceiver.expectMsg(OP_READ)
@@ -374,15 +380,15 @@ class TcpConnectionSpec extends AkkaSpec("""
         // send a batch that is bigger than the default buffer to make sure we don't recurse and
         // send more than one Received messages
         serverSideChannel.write(ByteBuffer.wrap((ts ++ us).getBytes("ASCII")))
-        connectionHandler.expectNoMsg(100.millis)
+        connectionHandler.expectNoMessage(100.millis)
 
         connectionActor ! ResumeReading
         interestCallReceiver.expectMsg(OP_READ)
         selector.send(connectionActor, ChannelReadable)
         connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should ===(ts)
 
-        interestCallReceiver.expectNoMsg(100.millis)
-        connectionHandler.expectNoMsg(100.millis)
+        interestCallReceiver.expectNoMessage(100.millis)
+        connectionHandler.expectNoMessage(100.millis)
 
         connectionActor ! ResumeReading
         interestCallReceiver.expectMsg(OP_READ)
@@ -390,8 +396,8 @@ class TcpConnectionSpec extends AkkaSpec("""
         connectionHandler.expectMsgType[Received].data.decodeString("ASCII") should ===(us)
 
         // make sure that after reading all pending data we don't yet register for reading more data
-        interestCallReceiver.expectNoMsg(100.millis)
-        connectionHandler.expectNoMsg(100.millis)
+        interestCallReceiver.expectNoMessage(100.millis)
+        connectionHandler.expectNoMessage(100.millis)
 
         val vs = "v" * (maxBufferSize / 2)
         serverSideChannel.write(ByteBuffer.wrap(vs.getBytes("ASCII")))
@@ -437,7 +443,7 @@ class TcpConnectionSpec extends AkkaSpec("""
         run {
           connectionHandler.send(connectionActor, Close)
           connectionHandler.expectMsg(Closed)
-          connectionHandler.expectNoMsg(500.millis)
+          connectionHandler.expectNoMessage(500.millis)
         }
       }
 
@@ -516,12 +522,12 @@ class TcpConnectionSpec extends AkkaSpec("""
           connectionHandler.send(connectionActor, writeCmd(Ack))
           connectionHandler.send(connectionActor, ConfirmedClose)
 
-          connectionHandler.expectNoMsg(100.millis)
+          connectionHandler.expectNoMessage(100.millis)
           pullFromServerSide(TestSize)
           connectionHandler.expectMsg(Ack)
 
           selector.send(connectionActor, ChannelReadable)
-          connectionHandler.expectNoMsg(100.millis) // not yet
+          connectionHandler.expectNoMessage(100.millis) // not yet
 
           val buffer = ByteBuffer.allocate(1)
           serverSelectionKey should be(selectedAs(SelectionKey.OP_READ, 2.seconds))
@@ -591,7 +597,7 @@ class TcpConnectionSpec extends AkkaSpec("""
         err.cause should ===(ConnectionResetByPeerMessage)
 
         // wait a while
-        connectionHandler.expectNoMsg(200.millis)
+        connectionHandler.expectNoMessage(200.millis)
 
         assertThisConnectionActorTerminated()
       }
@@ -716,7 +722,7 @@ class TcpConnectionSpec extends AkkaSpec("""
 
         // resuming must not immediately work (queue still full)
         writer.send(connectionActor, ResumeWriting)
-        writer.expectNoMsg(1.second)
+        writer.expectNoMessage(1.second)
 
         // so drain the queue until it works again
         while (!writer.msgAvailable) pullFromServerSide(TestSize)
@@ -827,8 +833,7 @@ class TcpConnectionSpec extends AkkaSpec("""
     "report abort before handler is registered (reproducer from #15033)" in {
       // This test needs the OP_CONNECT workaround on Windows, see original report #15033 and parent ticket #15766
 
-      val port = SocketUtil.temporaryServerAddress().getPort
-      val bindAddress = new InetSocketAddress(port)
+      val bindAddress = SocketUtil.temporaryServerAddress()
       val serverSocket = new ServerSocket(bindAddress.getPort, 100, bindAddress.getAddress)
       val connectionProbe = TestProbe()
 
@@ -836,13 +841,21 @@ class TcpConnectionSpec extends AkkaSpec("""
 
       IO(Tcp) ! Connect(bindAddress)
 
-      val socket = serverSocket.accept()
-      connectionProbe.expectMsgType[Tcp.Connected]
-      val connectionActor = connectionProbe.sender()
-      connectionActor ! PoisonPill
-      watch(connectionActor)
-      expectTerminated(connectionActor)
-      an[IOException] should be thrownBy { socket.getInputStream.read() }
+      try {
+        serverSocket.setSoTimeout(remainingOrDefault.toMillis.toInt)
+        val socket = serverSocket.accept()
+        connectionProbe.expectMsgType[Tcp.Connected]
+        val connectionActor = connectionProbe.sender()
+        connectionActor ! PoisonPill
+        watch(connectionActor)
+        expectTerminated(connectionActor)
+        an[IOException] should be thrownBy { socket.getInputStream.read() }
+      } catch {
+        case e: SocketTimeoutException ⇒
+          // thrown by serverSocket.accept, this may happen if network is offline
+          info(e.getMessage)
+          pending
+      }
     }
   }
 
@@ -902,6 +915,7 @@ class TcpConnectionSpec extends AkkaSpec("""
       new ChannelRegistration {
         def enableInterest(op: Int): Unit = interestCallReceiver.ref ! op
         def disableInterest(op: Int): Unit = interestCallReceiver.ref ! -op
+        def cancel(): Unit = ()
       }
 
     def createConnectionActorWithoutRegistration(

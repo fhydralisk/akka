@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.Done
@@ -56,13 +57,22 @@ class FlowWatchTerminationSpec extends StreamSpec {
       sinkProbe.request(5)
       sourceProbe.sendNext(1)
       sinkProbe.expectNext(1)
-      expectNoMsg(300.millis)
+      expectNoMessage(300.millis)
 
       sourceProbe.sendComplete()
       expectMsg(Done)
 
       sinkProbe.expectNextN(2 to 5)
         .expectComplete()
+    }
+
+    "fail future when stream abruptly terminated" in {
+      val mat = ActorMaterializer()
+
+      val (p, future) = TestSource.probe[Int].watchTermination()(Keep.both).to(Sink.ignore).run()(mat)
+      mat.shutdown()
+
+      future.failed.futureValue shouldBe an[AbruptTerminationException]
     }
 
   }

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote
@@ -9,26 +9,33 @@ import akka.actor._
 import akka.dispatch.sysmsg._
 import akka.event.{ EventStream, Logging, LoggingAdapter }
 import akka.event.Logging.Error
-import akka.serialization.{ Serialization, SerializationExtension }
 import akka.pattern.pipe
+
 import scala.util.control.NonFatal
+
 import akka.actor.SystemGuardian.{ RegisterTerminationHook, TerminationHook, TerminationHookDone }
+
 import scala.util.control.Exception.Catcher
 import scala.concurrent.Future
+
 import akka.ConfigurationException
+import akka.annotation.InternalApi
 import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
 import akka.remote.artery.ArteryTransport
+import akka.remote.artery.aeron.ArteryAeronUdpTransport
+import akka.remote.artery.ArterySettings
 import akka.util.OptionVal
 import akka.remote.artery.OutboundEnvelope
 import akka.remote.artery.SystemMessageDelivery.SystemMessageEnvelope
-import akka.remote.serialization.ActorRefResolveCache
 import akka.remote.serialization.ActorRefResolveThreadLocalCache
+import akka.remote.artery.tcp.ArteryTcpTransport
 
 /**
  * INTERNAL API
  */
+@InternalApi
 private[akka] object RemoteActorRefProvider {
-  private final case class Internals(transport: RemoteTransport, serialization: Serialization, remoteDaemon: InternalActorRef)
+  private final case class Internals(transport: RemoteTransport, remoteDaemon: InternalActorRef)
     extends NoSerializationVerificationNeeded
 
   sealed trait TerminatorState
@@ -166,7 +173,6 @@ private[akka] class RemoteActorRefProvider(
   @volatile private var _internals: Internals = _
 
   def transport: RemoteTransport = _internals.transport
-  def serialization: Serialization = _internals.serialization
   def remoteDaemon: InternalActorRef = _internals.remoteDaemon
 
   // This actor ensures the ordering of shutdown between remoteDaemon and the transport
@@ -190,23 +196,28 @@ private[akka] class RemoteActorRefProvider(
 
     val internals = Internals(
       remoteDaemon = {
-      val d = new RemoteSystemDaemon(
-        system,
-        local.rootPath / "remote",
-        rootGuardian,
-        remotingTerminator,
-        log,
-        untrustedMode = remoteSettings.UntrustedMode)
-      local.registerExtraNames(Map(("remote", d)))
-      d
-    },
-      serialization = SerializationExtension(system),
-      transport = if (remoteSettings.Artery.Enabled) new ArteryTransport(system, this) else new Remoting(system, this))
+        val d = new RemoteSystemDaemon(
+          system,
+          local.rootPath / "remote",
+          rootGuardian,
+          remotingTerminator,
+          _log,
+          untrustedMode = remoteSettings.UntrustedMode)
+        local.registerExtraNames(Map(("remote", d)))
+        d
+      },
+      transport =
+        if (remoteSettings.Artery.Enabled) remoteSettings.Artery.Transport match {
+          case ArterySettings.AeronUpd ⇒ new ArteryAeronUdpTransport(system, this)
+          case ArterySettings.Tcp      ⇒ new ArteryTcpTransport(system, this, tlsEnabled = false)
+          case ArterySettings.TlsTcp   ⇒ new ArteryTcpTransport(system, this, tlsEnabled = true)
+        }
+        else new Remoting(system, this))
 
     _internals = internals
     remotingTerminator ! internals
 
-    _log = Logging(eventStream, getClass.getName)
+    _log = Logging.withMarker(eventStream, getClass.getName)
 
     // this enables reception of remote requests
     transport.start()
@@ -299,8 +310,8 @@ private[akka] class RemoteActorRefProvider(
       }
 
       Iterator(props.deploy) ++ deployment.iterator reduce ((a, b) ⇒ b withFallback a) match {
-        case d @ Deploy(_, _, _, RemoteScope(addr), _, _) ⇒
-          if (hasAddress(addr)) {
+        case d @ Deploy(_, _, _, RemoteScope(address), _, _) ⇒
+          if (hasAddress(address)) {
             local.actorOf(system, props, supervisor, path, false, deployment.headOption, false, async)
           } else if (props.deploy.scope == LocalScope) {
             throw new ConfigurationException(s"configuration requested remote deployment for local-only Props at [$path]")
@@ -313,8 +324,8 @@ private[akka] class RemoteActorRefProvider(
               case NonFatal(e) ⇒ throw new ConfigurationException(
                 s"configuration problem while creating [$path] with dispatcher [${props.dispatcher}] and mailbox [${props.mailbox}]", e)
             }
-            val localAddress = transport.localAddressForRemote(addr)
-            val rpath = (RootActorPath(addr) / "remote" / localAddress.protocol / localAddress.hostPort / path.elements).
+            val localAddress = transport.localAddressForRemote(address)
+            val rpath = (RootActorPath(address) / "remote" / localAddress.protocol / localAddress.hostPort / path.elements).
               withUid(path.uid)
             new RemoteActorRef(transport, localAddress, rpath, supervisor, Some(props), Some(d))
           } catch {
@@ -390,7 +401,7 @@ private[akka] class RemoteActorRefProvider(
             new EmptyLocalActorRef(this, RootActorPath(address) / elems, eventStream)
         }
       case _ ⇒
-        log.debug("resolve of unknown path [{}] failed", path)
+        log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
         deadLetters
     }
   }
@@ -423,7 +434,7 @@ private[akka] class RemoteActorRefProvider(
         }
       }
     case _ ⇒
-      log.debug("resolve of unknown path [{}] failed", path)
+      log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
       deadLetters
   }
 
@@ -559,7 +570,7 @@ private[akka] class RemoteActorRef private[akka] (
     } catch handleException(message, Actor.noSender)
 
   override def !(message: Any)(implicit sender: ActorRef = Actor.noSender): Unit = {
-    if (message == null) throw new InvalidMessageException("Message is null")
+    if (message == null) throw InvalidMessageException("Message is null")
     try remote.send(message, OptionVal(sender), this) catch handleException(message, sender)
   }
 

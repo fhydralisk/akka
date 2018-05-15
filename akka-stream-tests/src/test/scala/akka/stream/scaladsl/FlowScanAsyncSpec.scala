@@ -1,12 +1,14 @@
 /**
- * Copyright (C) 2014-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.pattern
 import akka.stream.{ ActorAttributes, ActorMaterializer, Supervision }
 import akka.stream.impl.ReactiveStreamsCompliance
 import akka.stream.testkit.TestSubscriber.Probe
+import akka.stream.testkit.Utils.TE
 import akka.stream.testkit._
 import akka.stream.testkit.scaladsl._
 
@@ -30,8 +32,33 @@ class FlowScanAsyncSpec extends StreamSpec {
         .via(sumScanFlow)
         .runWith(TestSink.probe[Int])
         .request(1)
-        .expectNext(0)
-        .expectComplete()
+        .expectNextOrComplete(0)
+    }
+
+    "complete after zero-element has been consumed" in {
+      val (pub, sub) =
+        TestSource.probe[Int]
+          .via(Flow[Int].scanAsync(0)((acc, in) ⇒ Future.successful(acc + in)))
+          .toMat(TestSink.probe)(Keep.both)
+          .run()
+
+      sub.request(10)
+      sub.expectNext(0)
+      pub.sendComplete()
+      sub.expectComplete()
+    }
+
+    "fail after zero-element has been consumed" in {
+      val (pub, sub) =
+        TestSource.probe[Int]
+          .via(Flow[Int].scanAsync(0)((acc, in) ⇒ Future.successful(acc + in)))
+          .toMat(TestSink.probe)(Keep.both)
+          .run()
+
+      sub.request(10)
+      sub.expectNext(0)
+      pub.sendError(TE("bang"))
+      sub.expectError(TE("bang"))
     }
 
     "work with a single source" in {
@@ -73,7 +100,8 @@ class FlowScanAsyncSpec extends StreamSpec {
       Source.failed[Int](expected)
         .via(sumScanFlow)
         .runWith(TestSink.probe[Int])
-        .expectSubscriptionAndError(expected)
+        .request(2)
+        .expectNextOrError(0, expected)
     }
 
     "with the restarting decider" should {

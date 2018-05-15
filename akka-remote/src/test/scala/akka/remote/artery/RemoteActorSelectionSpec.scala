@@ -1,12 +1,11 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
-import akka.actor.{ Actor, ActorIdentity, ActorLogging, ActorRef, ActorRefScope, ActorSelection, ActorSystem, ExtendedActorSystem, Identify, PoisonPill, Props, Terminated }
-import akka.remote.RARP
-import akka.testkit.{ AkkaSpec, ImplicitSender, SocketUtil, TestActors }
-import com.typesafe.config.ConfigFactory
+import akka.actor.{ Actor, ActorIdentity, ActorLogging, ActorRef, ActorRefScope, ActorSelection, Identify, PoisonPill, Props, Terminated }
+import akka.testkit.{ ImplicitSender, SocketUtil, TestActors }
 
 import scala.concurrent.duration._
 import akka.testkit.JavaSerializable
@@ -38,10 +37,10 @@ class RemoteActorSelectionSpec extends ArteryMultiNodeSpec with ImplicitSender {
     // TODO fails with not receiving the localGrandchild value, seems to go to dead letters
     "select actors across node boundaries" ignore {
 
-      val remotePort = SocketUtil.temporaryServerAddress(udp = true).getPort
+      val remotePort = SocketUtil.temporaryLocalPort(udp = true)
       val remoteSysName = "remote-" + system.name
 
-      val localPort = SocketUtil.temporaryServerAddress(udp = true).getPort
+      val localPort = SocketUtil.temporaryLocalPort(udp = true)
       val localSysName = "local-" + system.name
 
       def config(port: Int) =

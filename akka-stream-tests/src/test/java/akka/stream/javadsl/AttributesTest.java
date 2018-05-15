@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.javadsl;
 
 import static org.junit.Assert.assertEquals;
@@ -35,7 +36,7 @@ public class AttributesTest extends StreamTest {
   @Test
   public void mustGetAttributesByClass() {
     assertEquals(
-      Arrays.asList(new Attributes.Name("a"), new Attributes.Name("b")),
+      Arrays.asList(new Attributes.Name("b"), new Attributes.Name("a")),
       attributes.getAttributeList(Attributes.Name.class));
     assertEquals(
         Collections.singletonList(new Attributes.InputBuffer(1, 2)),

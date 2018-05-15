@@ -1,8 +1,10 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
+import java.lang.reflect.InvocationTargetException
 import language.implicitConversions
 import java.lang.{ Iterable ⇒ JIterable }
 import java.util.concurrent.TimeUnit
@@ -328,7 +330,10 @@ abstract class SupervisorStrategy {
   def logFailure(context: ActorContext, child: ActorRef, cause: Throwable, decision: Directive): Unit =
     if (loggingEnabled) {
       val logMessage = cause match {
-        case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause.getMessage
+        case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause match {
+          case ex: InvocationTargetException if ex.getCause ne null ⇒ ex.getCause.getMessage
+          case ex ⇒ ex.getMessage
+        }
         case e ⇒ e.getMessage
       }
       decision match {
@@ -407,21 +412,18 @@ case class AllForOneStrategy(
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(maxNrOfRetries: Int, withinTimeRange: Duration, decider: SupervisorStrategy.Decider) =
     this(maxNrOfRetries = maxNrOfRetries, withinTimeRange = withinTimeRange)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(loggingEnabled: Boolean, decider: SupervisorStrategy.Decider) =
     this(loggingEnabled = loggingEnabled)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(decider: SupervisorStrategy.Decider) =
     this()(decider)
@@ -483,21 +485,15 @@ case class OneForOneStrategy(
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(maxNrOfRetries: Int, withinTimeRange: Duration, decider: SupervisorStrategy.Decider) =
     this(maxNrOfRetries = maxNrOfRetries, withinTimeRange = withinTimeRange)(decider)
 
-  /**
-   * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
-   */
   def this(loggingEnabled: Boolean, decider: SupervisorStrategy.Decider) =
     this(loggingEnabled = loggingEnabled)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(decider: SupervisorStrategy.Decider) =
     this()(decider)

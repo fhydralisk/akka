@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote.artery.compress;
@@ -220,7 +220,7 @@ public class CountMinSketch {
      * Hash item using pair independent hash functions.
      *
      * Implemetation based on "Less Hashing, Same Performance: Building a
-     * Better Bloom Filter" http://www.eecs.harvard.edu/~kirsch/pubs/bbbf/esa06.pdf
+     * Better Bloom Filter" https://www.eecs.harvard.edu/~michaelm/postscripts/tr-02-05.pdf
      * @param item what should be hashed
      * @param hashBuckets where hashes should be placed
      * @param limit value to shrink result

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.implicitConversions
@@ -9,6 +10,7 @@ import scala.collection.mutable
 import akka.routing.{ Deafen, Listen, Listeners }
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration._
+import akka.annotation.InternalApi
 
 object FSM {
 
@@ -87,18 +89,23 @@ object FSM {
   /**
    * INTERNAL API
    */
-  // FIXME: what about the cancellable?
-  private[akka] final case class Timer(name: String, msg: Any, repeat: Boolean, generation: Int)(context: ActorContext)
+  @InternalApi
+  private[akka] final case class Timer(name: String, msg: Any, repeat: Boolean, generation: Int,
+                                       owner: AnyRef)(context: ActorContext)
     extends NoSerializationVerificationNeeded {
     private var ref: Option[Cancellable] = _
     private val scheduler = context.system.scheduler
     private implicit val executionContext = context.dispatcher
 
-    def schedule(actor: ActorRef, timeout: FiniteDuration): Unit =
+    def schedule(actor: ActorRef, timeout: FiniteDuration): Unit = {
+      val timerMsg = msg match {
+        case m: AutoReceivedMessage ⇒ m
+        case _                      ⇒ this
+      }
       ref = Some(
-        if (repeat) scheduler.schedule(timeout, timeout, actor, this)
-        else scheduler.scheduleOnce(timeout, actor, this))
-
+        if (repeat) scheduler.schedule(timeout, timeout, actor, timerMsg)
+        else scheduler.scheduleOnce(timeout, actor, timerMsg))
+    }
     def cancel(): Unit =
       if (ref.isDefined) {
         ref.get.cancel()
@@ -238,7 +245,7 @@ object FSM {
  *     startWith(One, Data(42))
  *     when(One) {
  *         case Event(SomeMsg, Data(x)) => ...
- *         case Ev(SomeMsg) => ... // convenience when data not needed
+ *         case Event(SomeOtherMsg, _) => ... // when data not needed
  *     }
  *     when(Two, stateTimeout = 5 seconds) { ... }
  *     initialize()
@@ -419,7 +426,7 @@ trait FSM[S, D] extends Actor with Listeners with ActorLogging {
     if (timers contains name) {
       timers(name).cancel
     }
-    val timer = Timer(name, msg, repeat, timerGen.next)(context)
+    val timer = Timer(name, msg, repeat, timerGen.next, this)(context)
     timer.schedule(self, timeout)
     timers(name) = timer
   }
@@ -616,8 +623,8 @@ trait FSM[S, D] extends Actor with Listeners with ActorLogging {
       if (generation == gen) {
         processMsg(StateTimeout, "state timeout")
       }
-    case t @ Timer(name, msg, repeat, gen) ⇒
-      if ((timers contains name) && (timers(name).generation == gen)) {
+    case t @ Timer(name, msg, repeat, gen, owner) ⇒
+      if ((owner eq this) && (timers contains name) && (timers(name).generation == gen)) {
         if (timeoutFuture.isDefined) {
           timeoutFuture.get.cancel()
           timeoutFuture = None
@@ -781,10 +788,10 @@ trait LoggingFSM[S, D] extends FSM[S, D] { this: Actor ⇒
   private[akka] abstract override def processEvent(event: Event, source: AnyRef): Unit = {
     if (debugEvent) {
       val srcstr = source match {
-        case s: String            ⇒ s
-        case Timer(name, _, _, _) ⇒ "timer " + name
-        case a: ActorRef          ⇒ a.toString
-        case _                    ⇒ "unknown"
+        case s: String               ⇒ s
+        case Timer(name, _, _, _, _) ⇒ "timer " + name
+        case a: ActorRef             ⇒ a.toString
+        case _                       ⇒ "unknown"
       }
       log.debug("processing {} from {} in state {}", event, srcstr, stateName)
     }

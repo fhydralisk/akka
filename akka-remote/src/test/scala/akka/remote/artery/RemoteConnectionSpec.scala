@@ -1,13 +1,12 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
-import akka.actor.{ ActorSystem, ExtendedActorSystem }
-import akka.remote.RARP
+import akka.actor.ActorSystem
 import akka.testkit.SocketUtil._
-import akka.testkit.{ AkkaSpec, EventFilter, ImplicitSender, TestActors, TestEvent, TestProbe }
-import com.typesafe.config.ConfigFactory
+import akka.testkit.{ EventFilter, ImplicitSender, TestActors, TestEvent, TestProbe }
 
 import scala.concurrent.duration._
 
@@ -26,7 +25,7 @@ class RemoteConnectionSpec extends ArteryMultiNodeSpec("akka.remote.retry-gate-c
       muteSystem(localSystem)
       val localProbe = new TestProbe(localSystem)
 
-      val remotePort = temporaryServerAddress(udp = true).getPort
+      val remotePort = temporaryLocalPort(udp = true)
 
       // try to talk to it before it is up
       val selection = localSystem.actorSelection(s"akka://$nextGeneratedSystemName@localhost:$remotePort/user/echo")

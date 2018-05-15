@@ -1,20 +1,23 @@
 /**
- * Copyright (C) 2014-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.testkit
 
-import akka.actor.{ ActorSystem, DeadLetterSuppression, NoSerializationVerificationNeeded }
+import akka.actor.{ ActorRef, ActorSystem, DeadLetterSuppression, NoSerializationVerificationNeeded }
 import akka.stream._
-import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl._
-import akka.testkit.TestProbe
+import akka.testkit.{ TestActor, TestProbe }
 import org.reactivestreams.{ Publisher, Subscriber, Subscription }
+
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.language.existentials
 import java.io.StringWriter
 import java.io.PrintWriter
+import java.util.concurrent.CountDownLatch
+
+import akka.testkit.TestActor.AutoPilot
 
 /**
  * Provides factory methods for various Publishers.
@@ -27,6 +30,8 @@ object TestPublisher {
   final case class Subscribe(subscription: Subscription) extends PublisherEvent
   final case class CancelSubscription(subscription: Subscription) extends PublisherEvent
   final case class RequestMore(subscription: Subscription, elements: Long) extends PublisherEvent
+
+  final object SubscriptionDone extends NoSerializationVerificationNeeded
 
   /**
    * Publisher that signals complete to subscribers, after handing a void subscription.
@@ -75,6 +80,15 @@ object TestPublisher {
 
     private val probe: TestProbe = TestProbe()
 
+    //this is a way to pause receiving message from probe until subscription is done
+    private val subscribed = new CountDownLatch(1)
+    probe.ignoreMsg { case SubscriptionDone ⇒ true }
+    probe.setAutoPilot(new TestActor.AutoPilot() {
+      override def run(sender: ActorRef, msg: Any): AutoPilot = {
+        if (msg == SubscriptionDone) subscribed.countDown()
+        this
+      }
+    })
     private val self = this.asInstanceOf[Self]
 
     /**
@@ -84,35 +98,55 @@ object TestPublisher {
       val subscription: PublisherProbeSubscription[I] = new PublisherProbeSubscription[I](subscriber, probe)
       probe.ref ! Subscribe(subscription)
       if (autoOnSubscribe) subscriber.onSubscribe(subscription)
+      probe.ref ! SubscriptionDone
+    }
+
+    def executeAfterSubscription[T](f: ⇒ T): T = {
+      subscribed.await(
+        probe.testKitSettings.DefaultTimeout.duration.length,
+        probe.testKitSettings.DefaultTimeout.duration.unit)
+      f
     }
 
     /**
      * Expect a subscription.
      */
     def expectSubscription(): PublisherProbeSubscription[I] =
-      probe.expectMsgType[Subscribe].subscription.asInstanceOf[PublisherProbeSubscription[I]]
+      executeAfterSubscription { probe.expectMsgType[Subscribe].subscription.asInstanceOf[PublisherProbeSubscription[I]] }
 
     /**
      * Expect demand from a given subscription.
      */
-    def expectRequest(subscription: Subscription, n: Int): Self = {
+    def expectRequest(subscription: Subscription, n: Int): Self = executeAfterSubscription {
       probe.expectMsg(RequestMore(subscription, n))
       self
     }
 
     /**
      * Expect no messages.
+     * NOTE! Timeout value is automatically multiplied by timeFactor.
      */
-    def expectNoMsg(): Self = {
+    @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
+    def expectNoMsg(): Self = executeAfterSubscription {
       probe.expectNoMsg()
       self
     }
 
     /**
      * Expect no messages for a given duration.
+     * NOTE! Timeout value is automatically multiplied by timeFactor.
      */
-    def expectNoMsg(max: FiniteDuration): Self = {
+    @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
+    def expectNoMsg(max: FiniteDuration): Self = executeAfterSubscription {
       probe.expectNoMsg(max)
+      self
+    }
+
+    /**
+     * Expect no messages for a given duration.
+     */
+    def expectNoMessage(max: FiniteDuration): Self = executeAfterSubscription {
+      probe.expectNoMessage(max)
       self
     }
 
@@ -120,12 +154,35 @@ object TestPublisher {
      * Receive messages for a given duration or until one does not match a given partial function.
      */
     def receiveWhile[T](max: Duration = Duration.Undefined, idle: Duration = Duration.Inf, messages: Int = Int.MaxValue)(f: PartialFunction[PublisherEvent, T]): immutable.Seq[T] =
-      probe.receiveWhile(max, idle, messages)(f.asInstanceOf[PartialFunction[AnyRef, T]])
+      executeAfterSubscription { probe.receiveWhile(max, idle, messages)(f.asInstanceOf[PartialFunction[AnyRef, T]]) }
 
     def expectEventPF[T](f: PartialFunction[PublisherEvent, T]): T =
-      probe.expectMsgPF[T]()(f.asInstanceOf[PartialFunction[Any, T]])
+      executeAfterSubscription { probe.expectMsgPF[T]()(f.asInstanceOf[PartialFunction[Any, T]]) }
 
     def getPublisher: Publisher[I] = this
+
+    /**
+     * Execute code block while bounding its execution time between `min` and
+     * `max`. `within` blocks may be nested. All methods in this trait which
+     * take maximum wait times are available in a version which implicitly uses
+     * the remaining time governed by the innermost enclosing `within` block.
+     *
+     * Note that the timeout is scaled using Duration.dilated, which uses the
+     * configuration entry "akka.test.timefactor", while the min Duration is not.
+     *
+     * {{{
+     * val ret = within(50 millis) {
+     *   test ! "ping"
+     *   expectMsgClass(classOf[String])
+     * }
+     * }}}
+     */
+    def within[T](min: FiniteDuration, max: FiniteDuration)(f: ⇒ T): T = executeAfterSubscription { probe.within(min, max)(f) }
+
+    /**
+     * Same as calling `within(0 seconds, max)(f)`.
+     */
+    def within[T](max: FiniteDuration)(f: ⇒ T): T = executeAfterSubscription { probe.within(max)(f) }
   }
 
   /**
@@ -163,7 +220,7 @@ object TestPublisher {
       this
     }
 
-    def sendError(cause: Exception): Self = {
+    def sendError(cause: Throwable): Self = {
       subscription.sendError(cause)
       this
     }
@@ -512,7 +569,9 @@ object TestSubscriber {
      * Fluent DSL
      *
      * Same as `expectNoMsg(remaining)`, but correctly treating the timeFactor.
+     * NOTE! Timeout value is automatically multiplied by timeFactor.
      */
+    @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
     def expectNoMsg(): Self = {
       probe.expectNoMsg()
       self
@@ -522,29 +581,64 @@ object TestSubscriber {
      * Fluent DSL
      *
      * Assert that no message is received for the specified time.
+     * NOTE! Timeout value is automatically multiplied by timeFactor.
      */
+    @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
     def expectNoMsg(remaining: FiniteDuration): Self = {
       probe.expectNoMsg(remaining)
       self
     }
 
-    def expectNextPF[T](f: PartialFunction[Any, T]): T = {
-      expectEventPF {
-        case OnNext(n) if f.isDefinedAt(n) ⇒ f(n)
-      }
+    /**
+     * Fluent DSL
+     *
+     * Assert that no message is received for the specified time.
+     */
+    def expectNoMessage(remaining: FiniteDuration): Self = {
+      probe.expectNoMessage(remaining)
+      self
     }
 
     /**
-     * Expect next element and test it with partial function.
+     * Expect a stream element and test it with partial function.
+     *
+     */
+    def expectNextPF[T](f: PartialFunction[Any, T]): T =
+      expectNextWithTimeoutPF(Duration.Undefined, f)
+
+    /**
+     * Expect a stream element and test it with partial function.
+     *
+     * @param max wait no more than max time, otherwise throw AssertionError
+     */
+    def expectNextWithTimeoutPF[T](max: Duration, f: PartialFunction[Any, T]): T =
+      expectEventWithTimeoutPF(max, {
+        case OnNext(n) if f.isDefinedAt(n) ⇒ f(n)
+      })
+
+    /**
+     * Expect a stream element during specified time or timeout and test it with partial function.
+     *
+     * Allows chaining probe methods.
+     *
+     * @param max wait no more than max time, otherwise throw AssertionError
+     */
+    def expectNextChainingPF(max: Duration, f: PartialFunction[Any, Any]): Self =
+      expectNextWithTimeoutPF(max, f.andThen(_ ⇒ self))
+
+    /**
+     * Expect a stream element during specified time or timeout and test it with partial function.
      *
      * Allows chaining probe methods.
      */
-    def expectNextChainingPF(f: PartialFunction[Any, Any]): Self = {
-      expectNextPF(f.andThen(_ ⇒ self))
-    }
+    def expectNextChainingPF(f: PartialFunction[Any, Any]): Self =
+      expectNextChainingPF(Duration.Undefined, f)
+
+    def expectEventWithTimeoutPF[T](max: Duration, f: PartialFunction[SubscriberEvent, T]): T =
+      probe.expectMsgPF[T](max, hint = "message matching partial function")(f.asInstanceOf[PartialFunction[Any, T]])
 
     def expectEventPF[T](f: PartialFunction[SubscriberEvent, T]): T =
-      probe.expectMsgPF[T](hint = "message matching partial function")(f.asInstanceOf[PartialFunction[Any, T]])
+      expectEventWithTimeoutPF(Duration.Undefined, f)
 
     /**
      * Receive messages for a given duration or until one does not match a given partial function.
@@ -588,7 +682,28 @@ object TestSubscriber {
       drain()
     }
 
-    def within[T](max: FiniteDuration)(f: ⇒ T): T = probe.within(0.seconds, max)(f)
+    /**
+     * Execute code block while bounding its execution time between `min` and
+     * `max`. `within` blocks may be nested. All methods in this trait which
+     * take maximum wait times are available in a version which implicitly uses
+     * the remaining time governed by the innermost enclosing `within` block.
+     *
+     * Note that the timeout is scaled using Duration.dilated, which uses the
+     * configuration entry "akka.test.timefactor", while the min Duration is not.
+     *
+     * {{{
+     * val ret = within(50 millis) {
+     *   test ! "ping"
+     *   expectMsgClass(classOf[String])
+     * }
+     * }}}
+     */
+    def within[T](min: FiniteDuration, max: FiniteDuration)(f: ⇒ T): T = probe.within(min, max)(f)
+
+    /**
+     * Same as calling `within(0 seconds, max)(f)`.
+     */
+    def within[T](max: FiniteDuration)(f: ⇒ T): T = probe.within(max)(f)
 
     def onSubscribe(subscription: Subscription): Unit = probe.ref ! OnSubscribe(subscription)
     def onNext(element: I): Unit = probe.ref ! OnNext(element)
@@ -669,18 +784,18 @@ private[testkit] object StreamTestKit {
     def cancel(): Unit = publisherProbe.ref ! CancelSubscription(this)
 
     def expectRequest(n: Long): Unit = publisherProbe.expectMsg(RequestMore(this, n))
-    def expectRequest(): Long = publisherProbe.expectMsgPF() {
+    def expectRequest(): Long = publisherProbe.expectMsgPF(hint = "expecting request() signal") {
       case RequestMore(sub, n) if sub eq this ⇒ n
     }
 
-    def expectCancellation(): Unit = publisherProbe.fishForMessage() {
+    def expectCancellation(): Unit = publisherProbe.fishForMessage(hint = "Expecting cancellation") {
       case CancelSubscription(sub) if sub eq this ⇒ true
       case RequestMore(sub, _) if sub eq this     ⇒ false
     }
 
     def sendNext(element: I): Unit = subscriber.onNext(element)
     def sendComplete(): Unit = subscriber.onComplete()
-    def sendError(cause: Exception): Unit = subscriber.onError(cause)
+    def sendError(cause: Throwable): Unit = subscriber.onError(cause)
 
     def sendOnSubscribe(): Unit = subscriber.onSubscribe(this)
   }
@@ -691,7 +806,7 @@ private[testkit] object StreamTestKit {
       (probe, probe)
     }
     override protected def newInstance(shape: SourceShape[T]): SourceModule[T, TestPublisher.Probe[T]] = new ProbeSource[T](attributes, shape)
-    override def withAttributes(attr: Attributes): Module = new ProbeSource[T](attr, amendShape(attr))
+    override def withAttributes(attr: Attributes): SourceModule[T, TestPublisher.Probe[T]] = new ProbeSource[T](attr, amendShape(attr))
   }
 
   final class ProbeSink[T](val attributes: Attributes, shape: SinkShape[T])(implicit system: ActorSystem) extends SinkModule[T, TestSubscriber.Probe[T]](shape) {
@@ -700,7 +815,7 @@ private[testkit] object StreamTestKit {
       (probe, probe)
     }
     override protected def newInstance(shape: SinkShape[T]): SinkModule[T, TestSubscriber.Probe[T]] = new ProbeSink[T](attributes, shape)
-    override def withAttributes(attr: Attributes): Module = new ProbeSink[T](attr, amendShape(attr))
+    override def withAttributes(attr: Attributes): SinkModule[T, TestSubscriber.Probe[T]] = new ProbeSink[T](attr, amendShape(attr))
   }
 
 }

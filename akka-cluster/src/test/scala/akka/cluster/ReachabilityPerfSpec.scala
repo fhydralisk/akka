@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import org.scalatest.WordSpec
@@ -10,7 +11,8 @@ import akka.actor.Address
 class ReachabilityPerfSpec extends WordSpec with Matchers {
 
   val nodesSize = sys.props.get("akka.cluster.ReachabilityPerfSpec.nodesSize").getOrElse("250").toInt
-  val iterations = sys.props.get("akka.cluster.ReachabilityPerfSpec.iterations").getOrElse("10000").toInt
+  // increase for serious measurements
+  val iterations = sys.props.get("akka.cluster.ReachabilityPerfSpec.iterations").getOrElse("100").toInt
 
   val address = Address("akka.tcp", "sys", "a", 2552)
   val node = Address("akka.tcp", "sys", "a", 2552)
@@ -18,9 +20,9 @@ class ReachabilityPerfSpec extends WordSpec with Matchers {
   private def createReachabilityOfSize(base: Reachability, size: Int): Reachability =
     (base /: (1 to size)) {
       case (r, i) ⇒
-        val observer = UniqueAddress(address.copy(host = Some("node-" + i)), i)
+        val observer = UniqueAddress(address.copy(host = Some("node-" + i)), i.toLong)
         val j = if (i == size) 1 else i + 1
-        val subject = UniqueAddress(address.copy(host = Some("node-" + j)), j)
+        val subject = UniqueAddress(address.copy(host = Some("node-" + j)), j.toLong)
         r.unreachable(observer, subject).reachable(observer, subject)
     }
 

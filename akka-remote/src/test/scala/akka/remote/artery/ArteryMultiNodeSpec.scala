@@ -1,44 +1,22 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
-import java.nio.file.{ FileSystems, Files, Path }
-import java.util.UUID
-
+import akka.actor.BootstrapSetup
+import akka.actor.setup.ActorSystemSetup
 import akka.actor.{ ActorSystem, RootActorPath }
 import akka.remote.RARP
 import akka.testkit.AkkaSpec
 import com.typesafe.config.{ Config, ConfigFactory }
-import org.scalatest.Outcome
-
-object ArteryMultiNodeSpec {
-
-  def defaultConfig =
-    ConfigFactory.parseString(s"""
-      akka {
-        actor.provider = remote
-        actor.warn-about-java-serializer-usage = off
-        remote.artery {
-          enabled = on
-          canonical {
-            hostname = localhost
-            port = 0
-          }
-          advanced.flight-recorder {
-            enabled=on
-            destination=target/flight-recorder-${UUID.randomUUID().toString}.afr
-          }
-        }
-      }
-    """)
-}
 
 /**
  * Base class for remoting tests what needs to test interaction between a "local" actor system
  * which is always created (the usual AkkaSpec system), and multiple additional actor systems over artery
  */
-abstract class ArteryMultiNodeSpec(config: Config) extends AkkaSpec(config.withFallback(ArteryMultiNodeSpec.defaultConfig)) {
+abstract class ArteryMultiNodeSpec(config: Config) extends AkkaSpec(config.withFallback(ArterySpecSupport.defaultConfig))
+  with FlightRecorderSpecIntegration {
 
   def this() = this(ConfigFactory.empty())
   def this(extraConfig: String) = this(ConfigFactory.parseString(extraConfig))
@@ -50,8 +28,6 @@ abstract class ArteryMultiNodeSpec(config: Config) extends AkkaSpec(config.withF
   def address(sys: ActorSystem) = RARP(sys).provider.getDefaultAddress
   def rootActorPath(sys: ActorSystem) = RootActorPath(address(sys))
   def nextGeneratedSystemName = s"${localSystem.name}-remote-${remoteSystems.size}"
-  private val flightRecorderFile: Path =
-    FileSystems.getDefault.getPath(RARP(system).provider.remoteSettings.Artery.Advanced.FlightRecorderDestination)
 
   private var remoteSystems: Vector[ActorSystem] = Vector.empty
 
@@ -59,43 +35,37 @@ abstract class ArteryMultiNodeSpec(config: Config) extends AkkaSpec(config.withF
    * @return A new actor system configured with artery enabled. The system will
    *         automatically be terminated after test is completed to avoid leaks.
    */
-  def newRemoteSystem(extraConfig: Option[String] = None, name: Option[String] = None): ActorSystem = {
+  def newRemoteSystem(
+    extraConfig: Option[String]           = None,
+    name:        Option[String]           = None,
+    setup:       Option[ActorSystemSetup] = None): ActorSystem = {
     val config =
-      extraConfig.fold(
+      ArterySpecSupport.newFlightRecorderConfig.withFallback(extraConfig.fold(
         localSystem.settings.config
       )(
-        str ⇒ ConfigFactory.parseString(str).withFallback(localSystem.settings.config)
-      )
+          str ⇒ ConfigFactory.parseString(str).withFallback(localSystem.settings.config)
+        ))
+    val sysName = name.getOrElse(nextGeneratedSystemName)
 
-    val remoteSystem = ActorSystem(name.getOrElse(nextGeneratedSystemName), config)
+    val remoteSystem = setup match {
+      case None    ⇒ ActorSystem(sysName, config)
+      case Some(s) ⇒ ActorSystem(sysName, s.and(BootstrapSetup.apply(config)))
+    }
+
     remoteSystems = remoteSystems :+ remoteSystem
 
     remoteSystem
   }
 
-  // keep track of failure so that we can print flight recorder output on failures
-  private var failed = false
-  override protected def withFixture(test: NoArgTest): Outcome = {
-    val out = super.withFixture(test)
-    if (!out.isSucceeded) failed = true
-    out
-  }
-
   override def afterTermination(): Unit = {
     remoteSystems.foreach(sys ⇒ shutdown(sys))
+    (system +: remoteSystems).foreach(handleFlightRecorderFile)
     remoteSystems = Vector.empty
-    handleFlightRecorderFile()
+    super.afterTermination()
   }
 
-  private def handleFlightRecorderFile(): Unit = {
-    if (Files.exists(flightRecorderFile)) {
-      if (failed) {
-        // logger may not be alive anymore so we have to use stdout here
-        println("Flight recorder dump:")
-        FlightRecorderReader.dumpToStdout(flightRecorderFile)
-      }
-      Files.delete(flightRecorderFile)
-    }
+  def arteryTcpTlsEnabled(system: ActorSystem = system): Boolean = {
+    val arterySettings = ArterySettings(system.settings.config.getConfig("akka.remote.artery"))
+    arterySettings.Enabled && arterySettings.Transport == ArterySettings.TlsTcp
   }
-
 }

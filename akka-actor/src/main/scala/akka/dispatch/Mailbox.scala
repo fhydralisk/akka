@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.dispatch
 
 import java.util.concurrent._
@@ -17,7 +18,7 @@ import com.typesafe.config.Config
 
 import scala.annotation.tailrec
 import scala.concurrent.duration.{ Duration, FiniteDuration }
-import scala.concurrent.forkjoin.ForkJoinTask
+import akka.dispatch.forkjoin.ForkJoinTask
 import scala.util.control.NonFatal
 
 /**

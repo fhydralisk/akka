@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.singleton
@@ -45,11 +45,17 @@ object ClusterSingletonManagerLeaveSpec extends MultiNodeConfig {
    * The singleton actor
    */
   class Echo(testActor: ActorRef) extends Actor {
+    override def preStart(): Unit = {
+      testActor ! "preStart"
+    }
     override def postStop(): Unit = {
-      testActor ! "stopped"
+      testActor ! "postStop"
     }
 
     def receive = {
+      case "stop" ⇒
+        testActor ! "stop"
+        context.stop(self)
       case _ ⇒
         sender() ! self
     }
@@ -78,17 +84,19 @@ class ClusterSingletonManagerLeaveSpec extends MultiNodeSpec(ClusterSingletonMan
     system.actorOf(
       ClusterSingletonManager.props(
         singletonProps = Props(classOf[Echo], testActor),
-        terminationMessage = PoisonPill,
+        terminationMessage = "stop",
         settings = ClusterSingletonManagerSettings(system)),
       name = "echo")
   }
 
+  val echoProxyTerminatedProbe = TestProbe()
+
   lazy val echoProxy: ActorRef = {
-    system.actorOf(
+    echoProxyTerminatedProbe.watch(system.actorOf(
       ClusterSingletonProxy.props(
         singletonManagerPath = "/user/echo",
         settings = ClusterSingletonProxySettings(system)),
-      name = "echoProxy")
+      name = "echoProxy"))
   }
 
   "Leaving ClusterSingletonManager" must {
@@ -97,12 +105,22 @@ class ClusterSingletonManagerLeaveSpec extends MultiNodeSpec(ClusterSingletonMan
       join(first, first)
 
       runOn(first) {
-        echoProxy ! "hello"
-        expectMsgType[ActorRef](5.seconds)
+        within(5.seconds) {
+          expectMsg("preStart")
+          echoProxy ! "hello"
+          expectMsgType[ActorRef]
+        }
       }
       enterBarrier("first-active")
 
       join(second, first)
+      runOn(first, second) {
+        within(10.seconds) {
+          awaitAssert(cluster.state.members.count(m ⇒ m.status == MemberStatus.Up) should be(2))
+        }
+      }
+      enterBarrier("second-up")
+
       join(third, first)
       within(10.seconds) {
         awaitAssert(cluster.state.members.count(m ⇒ m.status == MemberStatus.Up) should be(3))
@@ -114,14 +132,25 @@ class ClusterSingletonManagerLeaveSpec extends MultiNodeSpec(ClusterSingletonMan
       }
 
       runOn(first) {
-        expectMsg(10.seconds, "stopped")
+        cluster.registerOnMemberRemoved(testActor ! "MemberRemoved")
+        expectMsg(10.seconds, "stop")
+        expectMsg("postStop")
+        // CoordinatedShutdown makes sure that singleton actors are
+        // stopped before Cluster shutdown
+        expectMsg("MemberRemoved")
+        echoProxyTerminatedProbe.expectTerminated(echoProxy, 10.seconds)
       }
       enterBarrier("first-stopped")
+
+      runOn(second) {
+        expectMsg("preStart")
+      }
+      enterBarrier("second-started")
 
       runOn(second, third) {
         val p = TestProbe()
         val firstAddress = node(first).address
-        p.within(10.seconds) {
+        p.within(15.seconds) {
           p.awaitAssert {
             echoProxy.tell("hello2", p.ref)
             p.expectMsgType[ActorRef](1.seconds).path.address should not be (firstAddress)
@@ -129,8 +158,33 @@ class ClusterSingletonManagerLeaveSpec extends MultiNodeSpec(ClusterSingletonMan
           }
         }
       }
+      enterBarrier("second-working")
 
-      enterBarrier("hand-over-done")
+      runOn(second) {
+        cluster.registerOnMemberRemoved(testActor ! "MemberRemoved")
+        cluster.leave(node(second).address)
+        expectMsg(15.seconds, "stop")
+        expectMsg("postStop")
+        expectMsg("MemberRemoved")
+        echoProxyTerminatedProbe.expectTerminated(echoProxy, 10.seconds)
+      }
+      enterBarrier("second-stopped")
+
+      runOn(third) {
+        expectMsg("preStart")
+      }
+      enterBarrier("third-started")
+
+      runOn(third) {
+        cluster.registerOnMemberRemoved(testActor ! "MemberRemoved")
+        cluster.leave(node(third).address)
+        expectMsg(5.seconds, "stop")
+        expectMsg("postStop")
+        expectMsg("MemberRemoved")
+        echoProxyTerminatedProbe.expectTerminated(echoProxy, 10.seconds)
+      }
+      enterBarrier("third-stopped")
+
     }
 
   }

@@ -1,19 +1,23 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
-import com.typesafe.tools.mima.plugin.MimaKeys.reportBinaryIssues
+import com.lightbend.paradox.sbt.ParadoxPlugin
+import com.lightbend.paradox.sbt.ParadoxPlugin.autoImport.paradox
+import com.typesafe.tools.mima.plugin.MimaKeys.mimaReportBinaryIssues
 import com.typesafe.tools.mima.plugin.MimaPlugin
 import net.virtualvoid.sbt.graph.backend.SbtUpdateReport
 import net.virtualvoid.sbt.graph.DependencyGraphKeys._
 import net.virtualvoid.sbt.graph.ModuleGraph
 import org.kohsuke.github._
-import sbtunidoc.Plugin.UnidocKeys.unidoc
+import sbtunidoc.BaseUnidocPlugin.autoImport.unidoc
 import sbt.Keys._
 import sbt._
 
 import scala.collection.immutable
+import scala.sys.process._
 import scala.util.matching.Regex
 
 object ValidatePullRequest extends AutoPlugin {
@@ -83,7 +87,6 @@ object ValidatePullRequest extends AutoPlugin {
   def changedDirectoryIsDependency(changedDirs: Set[String],
                                     name: String,
                                     graphsToTest: Seq[(Configuration, ModuleGraph)])(log: Logger): Boolean = {
-    val dirsOrExperimental = changedDirs.flatMap(dir => Set(dir, s"$dir-experimental"))
     graphsToTest exists { case (ivyScope, deps) =>
       log.debug(s"Analysing [$ivyScope] scoped dependencies...")
 
@@ -92,7 +95,7 @@ object ValidatePullRequest extends AutoPlugin {
       // if this project depends on a modified module, we must test it
       deps.nodes.exists { m =>
         // match just by name, we'd rather include too much than too little
-        val dependsOnModule = dirsOrExperimental.find(m.id.name contains _)
+        val dependsOnModule = changedDirs.find(m.id.name contains _)
         val depends = dependsOnModule.isDefined
         if (depends) log.info(s"Project [$name] must be verified, because depends on [${dependsOnModule.get}]")
         depends
@@ -123,9 +126,10 @@ object ValidatePullRequest extends AutoPlugin {
     buildAllKeyword in Global in ValidatePR := """PLS BUILD ALL""".r,
 
     githubEnforcedBuildAll in Global in ValidatePR := {
+      val log = streams.value.log
+      val buildAllMagicPhrase = (buildAllKeyword in ValidatePR).value
+
       sys.env.get(PullIdEnvVarName).map(_.toInt) flatMap { prId =>
-        val log = streams.value.log
-        val buildAllMagicPhrase = (buildAllKeyword in ValidatePR).value
         log.info("Checking GitHub comments for PR validation options...")
 
         try {
@@ -174,7 +178,7 @@ object ValidatePullRequest extends AutoPlugin {
             .map(_.takeWhile(_ != '/'))
             .filter(dir => dir.startsWith("akka-") || dir == "project")
             .toSet
-          log.info("Detected uncomitted changes in directories (including in dependency analysis): " + dirtyDirectories.mkString("[", ",", "]"))
+          log.info("Detected uncommitted changes in directories (including in dependency analysis): " + dirtyDirectories.mkString("[", ",", "]"))
           dirtyDirectories
         }
 
@@ -190,6 +194,11 @@ object ValidatePullRequest extends AutoPlugin {
     testOptions in ValidatePR += Tests.Argument(TestFrameworks.ScalaTest, "-l", "long-running"),
     testOptions in ValidatePR += Tests.Argument(TestFrameworks.ScalaTest, "-l", "timing"),
 
+    // make it fork just like regular test running
+    fork in ValidatePR := (fork in Test).value,
+    testGrouping in ValidatePR := (testGrouping in Test).value,
+    javaOptions in ValidatePR := (javaOptions in Test).value,
+
     projectBuildMode in ValidatePR := {
       val log = streams.value.log
       log.debug(s"Analysing project (for inclusion in PR validation): [${name.value}]")
@@ -199,7 +208,7 @@ object ValidatePullRequest extends AutoPlugin {
       val thisProjectId = CrossVersion(scalaVersion.value, scalaBinaryVersion.value)(projectID.value)
 
       def graphFor(updateReport: UpdateReport, config: Configuration): (Configuration, ModuleGraph) =
-        config -> SbtUpdateReport.fromConfigurationReport(updateReport.configuration(config.name).get, thisProjectId)
+        config -> SbtUpdateReport.fromConfigurationReport(updateReport.configuration(config).get, thisProjectId)
 
       def isDependency: Boolean =
         changedDirectoryIsDependency(
@@ -238,7 +247,7 @@ object ValidatePullRequest extends AutoPlugin {
       // Create a task for every validation task key and
       // then zip all of the tasks together discarding outputs.
       // Task failures are propagated as normal.
-      val zero: Def.Initialize[Seq[Task[Any]]] = Def.setting { Seq(task())}
+      val zero: Def.Initialize[Seq[Task[Any]]] = Def.setting { Seq(task(()))}
       validationTasks.map(taskKey => Def.task { taskKey.value } ).foldLeft(zero) { (acc, current) =>
         acc.zipWith(current) { case (taskSeq, task) =>
           taskSeq :+ task.asInstanceOf[Task[Any]]
@@ -251,35 +260,49 @@ object ValidatePullRequest extends AutoPlugin {
 }
 
 /**
- * This autoplugin adds Multi Jvm tests to validatePullRequest task.
- * It is needed, because ValidatePullRequest autoplugin does not depend on MultiNode and
- * therefore test:executeTests is not yet modified to include multi-jvm tests when ValidatePullRequest
- * build strategy is being determined.
- *
- * Making ValidatePullRequest depend on MultiNode is impossible, as then ValidatePullRequest
- * autoplugin would trigger only on projects which have both of these plugins enabled.
- */
+* This autoplugin adds Multi Jvm tests to validatePullRequest task.
+* It is needed, because ValidatePullRequest autoplugin does not depend on MultiNode and
+* therefore test:executeTests is not yet modified to include multi-jvm tests when ValidatePullRequest
+* build strategy is being determined.
+*
+* Making ValidatePullRequest depend on MultiNode is impossible, as then ValidatePullRequest
+* autoplugin would trigger only on projects which have both of these plugins enabled.
+*/
 object MultiNodeWithPrValidation extends AutoPlugin {
   import ValidatePullRequest._
 
   override def trigger = allRequirements
   override def requires = ValidatePullRequest && MultiNode
-  override lazy val projectSettings = Seq(
-    additionalTasks in ValidatePR += MultiNode.multiTest
-  )
+  override lazy val projectSettings =
+    if (MultiNode.multiNodeTestInTest) Seq(additionalTasks in ValidatePR += MultiNode.multiTest)
+    else Nil
 }
 
 /**
- * This autoplugin adds MiMa binary issue reporting to validatePullRequest task,
- * when a project has MimaPlugin autoplugin enabled.
- */
+* This autoplugin adds MiMa binary issue reporting to validatePullRequest task,
+* when a project has MimaPlugin autoplugin enabled.
+*/
 object MimaWithPrValidation extends AutoPlugin {
   import ValidatePullRequest._
 
   override def trigger = allRequirements
   override def requires = ValidatePullRequest && MimaPlugin
   override lazy val projectSettings = Seq(
-    additionalTasks in ValidatePR += reportBinaryIssues
+    additionalTasks in ValidatePR += mimaReportBinaryIssues
+  )
+}
+
+/**
+  * This autoplugin adds Paradox doc generation to validatePullRequest task,
+  * when a project has ParadoxPlugin autoplugin enabled.
+  */
+object ParadoxWithPrValidation extends AutoPlugin {
+  import ValidatePullRequest._
+
+  override def trigger = allRequirements
+  override def requires = ValidatePullRequest && ParadoxPlugin
+  override lazy val projectSettings = Seq(
+    additionalTasks in ValidatePR += paradox in Compile
   )
 }
 

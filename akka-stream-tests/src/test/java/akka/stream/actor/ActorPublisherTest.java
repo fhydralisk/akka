@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.stream.actor;
 
 import akka.actor.ActorRef;
@@ -6,7 +10,7 @@ import akka.stream.StreamTest;
 import akka.testkit.AkkaJUnitActorSystemResource;
 import akka.stream.javadsl.Source;
 import akka.testkit.AkkaSpec;
-import akka.testkit.JavaTestKit;
+import akka.testkit.javadsl.TestKit;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.reactivestreams.Publisher;
@@ -38,7 +42,7 @@ public class ActorPublisherTest extends StreamTest {
 
   @Test
   public void mustHaveJavaAPI() {
-    final JavaTestKit probe = new JavaTestKit(system);
+    final TestKit probe = new TestKit(system);
     final ActorRef ref = system
       .actorOf(Props.create(TestPublisher.class).withDispatcher("akka.test.stream-dispatcher"));
     final Publisher<Integer> publisher = UntypedActorPublisher.create(ref);

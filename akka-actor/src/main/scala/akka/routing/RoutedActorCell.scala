@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import akka.actor.Actor
@@ -102,17 +103,11 @@ private[akka] class RoutedActorCell(
     _router = routerConfig.createRouter(system)
     routerConfig match {
       case pool: Pool ⇒
-        // must not use pool.nrOfInstances(system) for old (not re-compiled) custom routers
-        // for binary backwards compatibility reasons
-        val deprecatedNrOfInstances = pool.nrOfInstances
-        val nrOfRoutees = if (deprecatedNrOfInstances < 0) pool.nrOfInstances(system) else deprecatedNrOfInstances
+        val nrOfRoutees = pool.nrOfInstances(system)
         if (nrOfRoutees > 0)
           addRoutees(Vector.fill(nrOfRoutees)(pool.newRoutee(routeeProps, this)))
       case group: Group ⇒
-        // must not use group.paths(system) for old (not re-compiled) custom routers
-        // for binary backwards compatibility reasons
-        val deprecatedPaths = group.paths
-        val paths = if (deprecatedPaths == null) group.paths(system) else deprecatedPaths
+        val paths = group.paths(system)
         if (paths.nonEmpty)
           addRoutees(paths.map(p ⇒ group.routeeFor(p, this))(collection.breakOut))
       case _ ⇒
@@ -155,8 +150,8 @@ private[akka] class RouterActor extends Actor {
 
   val routingLogicController: Option[ActorRef] = cell.routerConfig.routingLogicController(
     cell.router.logic).map(props ⇒ context.actorOf(
-    props.withDispatcher(context.props.dispatcher),
-    name = "routingLogicController"))
+      props.withDispatcher(context.props.dispatcher),
+      name = "routingLogicController"))
 
   def receive = {
     case GetRoutees ⇒

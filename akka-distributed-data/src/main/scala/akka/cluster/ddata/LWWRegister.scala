@@ -1,11 +1,13 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata
 
 import akka.cluster.Cluster
 import akka.cluster.UniqueAddress
 import akka.util.HashCode
+import akka.annotation.InternalApi
 
 object LWWRegister {
 
@@ -43,7 +45,7 @@ object LWWRegister {
   /**
    * INTERNAL API
    */
-  private[akka] def apply[A](node: UniqueAddress, initialValue: A, clock: Clock[A]): LWWRegister[A] =
+  @InternalApi private[akka] def apply[A](node: UniqueAddress, initialValue: A, clock: Clock[A]): LWWRegister[A] =
     new LWWRegister(node, initialValue, clock(0L, initialValue))
 
   def apply[A](initialValue: A)(implicit node: Cluster, clock: Clock[A] = defaultClock[A]): LWWRegister[A] =
@@ -148,7 +150,7 @@ final class LWWRegister[A] private[akka] (
   /**
    * INTERNAL API
    */
-  private[akka] def withValue(node: UniqueAddress, value: A, clock: Clock[A]): LWWRegister[A] =
+  @InternalApi private[akka] def withValue(node: UniqueAddress, value: A, clock: Clock[A]): LWWRegister[A] =
     new LWWRegister(node, value, clock(timestamp, value))
 
   override def merge(that: LWWRegister[A]): LWWRegister[A] =

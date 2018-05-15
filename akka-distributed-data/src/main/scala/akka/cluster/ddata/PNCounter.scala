@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata
 
 import akka.cluster.Cluster
@@ -39,9 +40,11 @@ object PNCounter {
 @SerialVersionUID(1L)
 final class PNCounter private[akka] (
   private[akka] val increments: GCounter, private[akka] val decrements: GCounter)
-  extends ReplicatedData with ReplicatedDataSerialization with RemovedNodePruning {
+  extends DeltaReplicatedData with ReplicatedDelta
+  with ReplicatedDataSerialization with RemovedNodePruning {
 
   type T = PNCounter
+  type D = PNCounter
 
   /**
    * Scala API: Current total value of the counter.
@@ -54,45 +57,68 @@ final class PNCounter private[akka] (
   def getValue: BigInteger = value.bigInteger
 
   /**
-   * Increment the counter with the delta specified.
+   * Increment the counter with the delta `n` specified.
    * If the delta is negative then it will decrement instead of increment.
    */
-  def +(delta: Long)(implicit node: Cluster): PNCounter = increment(node, delta)
+  def +(n: Long)(implicit node: Cluster): PNCounter = increment(node, n)
 
   /**
-   * Increment the counter with the delta specified.
+   * Increment the counter with the delta `n` specified.
    * If the delta is negative then it will decrement instead of increment.
    */
-  def increment(node: Cluster, delta: Long = 1): PNCounter =
-    increment(node.selfUniqueAddress, delta)
+  def increment(node: Cluster, n: Long = 1): PNCounter =
+    increment(node.selfUniqueAddress, n)
 
   /**
-   * Decrement the counter with the delta specified.
+   * Decrement the counter with the delta `n` specified.
    * If the delta is negative then it will increment instead of decrement.
    */
-  def -(delta: Long)(implicit node: Cluster): PNCounter = decrement(node, delta)
+  def -(n: Long)(implicit node: Cluster): PNCounter = decrement(node, n)
 
   /**
-   * Decrement the counter with the delta specified.
-   * If the delta is negative then it will increment instead of decrement.
+   * Decrement the counter with the delta `n` specified.
+   * If the delta `n` is negative then it will increment instead of decrement.
    */
-  def decrement(node: Cluster, delta: Long = 1): PNCounter =
-    decrement(node.selfUniqueAddress, delta)
+  def decrement(node: Cluster, n: Long = 1): PNCounter =
+    decrement(node.selfUniqueAddress, n)
 
-  private[akka] def increment(key: UniqueAddress, delta: Long): PNCounter = change(key, delta)
+  private[akka] def increment(key: UniqueAddress, n: Long): PNCounter = change(key, n)
   private[akka] def increment(key: UniqueAddress): PNCounter = increment(key, 1)
-  private[akka] def decrement(key: UniqueAddress, delta: Long): PNCounter = change(key, -delta)
+  private[akka] def decrement(key: UniqueAddress, n: Long): PNCounter = change(key, -n)
   private[akka] def decrement(key: UniqueAddress): PNCounter = decrement(key, 1)
 
-  private[akka] def change(key: UniqueAddress, delta: Long): PNCounter =
-    if (delta > 0) copy(increments = increments.increment(key, delta))
-    else if (delta < 0) copy(decrements = decrements.increment(key, -delta))
+  private[akka] def change(key: UniqueAddress, n: Long): PNCounter =
+    if (n > 0) copy(increments = increments.increment(key, n))
+    else if (n < 0) copy(decrements = decrements.increment(key, -n))
     else this
 
   override def merge(that: PNCounter): PNCounter =
     copy(
       increments = that.increments.merge(this.increments),
       decrements = that.decrements.merge(this.decrements))
+
+  override def delta: Option[PNCounter] = {
+    val incrementsDelta = increments.delta match {
+      case Some(d) ⇒ d
+      case None    ⇒ GCounter.empty
+    }
+    val decrementsDelta = decrements.delta match {
+      case Some(d) ⇒ d
+      case None    ⇒ GCounter.empty
+    }
+    Some(new PNCounter(incrementsDelta, decrementsDelta))
+  }
+
+  override def mergeDelta(thatDelta: PNCounter): PNCounter = merge(thatDelta)
+
+  override def zero: PNCounter = PNCounter.empty
+
+  override def resetDelta: PNCounter =
+    if (increments.delta.isEmpty && decrements.delta.isEmpty) this
+    else new PNCounter(increments.resetDelta, decrements.resetDelta)
+
+  override def modifiedByNodes: Set[UniqueAddress] =
+    increments.modifiedByNodes union decrements.modifiedByNodes
 
   override def needPruningFrom(removedNode: UniqueAddress): Boolean =
     increments.needPruningFrom(removedNode) || decrements.needPruningFrom(removedNode)

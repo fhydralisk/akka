@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.camel;
 
 import akka.actor.*;
@@ -28,8 +32,11 @@ public class CustomRouteTest extends JUnitSuite {
   private ActorSystem system = null;
   private Camel camel = null;
 
-  public static class MyActor extends UntypedActor {
-    @Override public void onReceive(Object o) {}
+  public static class MyActor extends AbstractActor {
+    @Override
+    public Receive createReceive() {
+      return receiveBuilder().build();
+    }
   }
 
   @Before

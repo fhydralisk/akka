@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf;
@@ -10,6 +10,7 @@ import scala.PartialFunction;
 
 import static org.junit.Assert.*;
 
+@SuppressWarnings("serial")
 public class PFBuilderTest extends JUnitSuite {
 
   @Test
@@ -18,7 +19,7 @@ public class PFBuilderTest extends JUnitSuite {
       .matchEquals("hello", s -> 1)
       .matchAny(s -> Integer.valueOf(s))
       .build();
-      
+
     assertTrue(pf.isDefinedAt("hello"));
     assertTrue(pf.isDefinedAt("42"));
     assertEquals(42, pf.apply("42").intValue());

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.dispatch
 
 import language.postfixOps
@@ -134,7 +135,7 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
     ensureInitialMailboxState(config, q)
 
     EventFilter.warning(
-      pattern = ".*received dead letter from Actor.*MailboxSpec/deadLetters.*",
+      pattern = "received dead letter without sender",
       occurrences = (enqueueN - dequeueN)) intercept {
 
       def createProducer(fromNum: Int, toNum: Int): Future[Vector[Envelope]] = spawn {

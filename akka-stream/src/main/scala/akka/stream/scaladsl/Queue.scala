@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import scala.concurrent.Future
@@ -18,15 +19,19 @@ trait SourceQueue[T] {
    * - completes with `Dropped` when stream dropped offered element
    * - completes with `QueueClosed` when stream is completed during future is active
    * - completes with `Failure(f)` when failure to enqueue element from upstream
-   * - fails when stream is completed or you cannot call offer in this moment because of implementation rules
-   * (like for backpressure mode and full buffer you need to wait for last offer call Future completion)
+   * - fails when stream is completed
+   *
+   * Additionally when using the backpressure overflowStrategy:
+   * - If the buffer is full the Future won't be completed until there is space in the buffer
+   * - Calling offer before the Future is completed in this case will return a failed Future
    *
    * @param elem element to send to a stream
    */
   def offer(elem: T): Future[QueueOfferResult]
 
   /**
-   * Method returns future that completes when stream is completed and fails when stream failed
+   * Method returns a [[Future]] that will be completed if the stream completes,
+   * or will be failed when the stage faces an internal failure.
    */
   def watchCompletion(): Future[Done]
 }
@@ -46,6 +51,12 @@ trait SourceQueueWithComplete[T] extends SourceQueue[T] {
    * operation’s success.
    */
   def fail(ex: Throwable): Unit
+
+  /**
+   * Method returns a [[Future]] that will be completed if the stream completes,
+   * or will be failed when the stage faces an internal failure or the the [[SourceQueueWithComplete.fail]] method is invoked.
+   */
+  def watchCompletion(): Future[Done]
 }
 
 /**

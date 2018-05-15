@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2014-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata.protobuf
 
 import java.io.ByteArrayInputStream
@@ -8,17 +9,18 @@ import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import scala.annotation.tailrec
+import scala.collection.immutable.TreeMap
+import scala.collection.JavaConverters._
+import scala.collection.breakOut
 import akka.actor.ActorRef
 import akka.actor.Address
 import akka.actor.ExtendedActorSystem
 import akka.cluster.UniqueAddress
 import akka.cluster.ddata.protobuf.msg.{ ReplicatorMessages ⇒ dm }
-import akka.serialization.JSerializer
-import akka.serialization.Serialization
-import akka.serialization.SerializationExtension
+import akka.serialization._
 import akka.protobuf.ByteString
 import akka.protobuf.MessageLite
-import akka.serialization.SerializerWithStringManifest
+import akka.cluster.ddata.VersionVector
 
 /**
  * Some useful serialization helper methods.
@@ -101,8 +103,32 @@ trait SerializationSupport {
       } else {
         // old remote node
         uniqueAddress.getUid.toLong
-      }
-    )
+      })
+
+  def versionVectorToProto(versionVector: VersionVector): dm.VersionVector = {
+    val b = dm.VersionVector.newBuilder()
+    versionVector.versionsIterator.foreach {
+      case (node, value) ⇒ b.addEntries(dm.VersionVector.Entry.newBuilder().
+        setNode(uniqueAddressToProto(node)).setVersion(value))
+    }
+    b.build()
+  }
+
+  def versionVectorFromBinary(bytes: Array[Byte]): VersionVector =
+    versionVectorFromProto(dm.VersionVector.parseFrom(bytes))
+
+  def versionVectorFromProto(versionVector: dm.VersionVector): VersionVector = {
+    val entries = versionVector.getEntriesList
+    if (entries.isEmpty)
+      VersionVector.empty
+    else if (entries.size == 1)
+      VersionVector(uniqueAddressFromProto(entries.get(0).getNode), entries.get(0).getVersion)
+    else {
+      val versions: TreeMap[UniqueAddress, Long] = versionVector.getEntriesList.asScala.map(entry ⇒
+        uniqueAddressFromProto(entry.getNode) → entry.getVersion)(breakOut)
+      VersionVector(versions)
+    }
+  }
 
   def resolveActorRef(path: String): ActorRef =
     system.provider.resolveActorRef(path)
@@ -115,15 +141,8 @@ trait SerializationSupport {
         setEnclosedMessage(ByteString.copyFrom(msgSerializer.toBinary(m)))
         .setSerializerId(msgSerializer.identifier)
 
-      msgSerializer match {
-        case ser2: SerializerWithStringManifest ⇒
-          val manifest = ser2.manifest(m)
-          if (manifest != "")
-            builder.setMessageManifest(ByteString.copyFromUtf8(manifest))
-        case _ ⇒
-          if (msgSerializer.includeManifest)
-            builder.setMessageManifest(ByteString.copyFromUtf8(m.getClass.getName))
-      }
+      val ms = Serializers.manifestFor(msgSerializer, m)
+      if (ms.nonEmpty) builder.setMessageManifest(ByteString.copyFromUtf8(ms))
 
       builder.build()
     }

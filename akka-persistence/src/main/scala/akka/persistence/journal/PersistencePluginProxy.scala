@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.persistence.journal
 
 import java.net.URISyntaxException
@@ -183,7 +184,7 @@ final class PersistencePluginProxy(config: Config) extends Actor with Stash with
 
     case req: SnapshotProtocol.Request ⇒ req match { // exhaustive match
       case LoadSnapshot(persistenceId, criteria, toSequenceNr) ⇒
-        sender() ! LoadSnapshotResult(None, toSequenceNr)
+        sender() ! LoadSnapshotFailed(timeoutException)
       case SaveSnapshot(metadata, snapshot) ⇒
         sender() ! SaveSnapshotFailure(metadata, timeoutException)
       case DeleteSnapshot(metadata) ⇒

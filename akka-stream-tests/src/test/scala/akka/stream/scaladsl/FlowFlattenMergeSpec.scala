@@ -1,11 +1,14 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.NotUsed
-import akka.stream.{ ActorMaterializerSettings, ActorMaterializer }
-import akka.stream.testkit.Utils.assertAllStagesStopped
+import akka.stream.stage.{ GraphStage, GraphStageLogic, OutHandler }
+import akka.stream._
+import akka.stream.testkit.Utils.{ TE, assertAllStagesStopped }
+
 import scala.concurrent._
 import scala.concurrent.duration._
 import akka.stream.testkit.{ StreamSpec, TestPublisher }
@@ -91,6 +94,22 @@ class FlowFlattenMergeSpec extends StreamSpec {
       }.cause.get should ===(ex)
     }
 
+    "bubble up substream materialization exception" in assertAllStagesStopped {
+      val matFail = TE("fail!")
+      object FailingInnerMat extends GraphStage[SourceShape[String]] {
+        val out = Outlet[String]("out")
+        val shape = SourceShape(out)
+        override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+          throw matFail
+        }
+      }
+
+      val result = Source.single(()).flatMapMerge(4, _ ⇒ Source.fromGraph(FailingInnerMat)).runWith(Sink.ignore)
+
+      result.failed.futureValue should ===(matFail)
+
+    }
+
     "cancel substreams when failing from main stream" in assertAllStagesStopped {
       val p1, p2 = TestPublisher.probe[Int]()
       val ex = new Exception("buh")
@@ -163,6 +182,31 @@ class FlowFlattenMergeSpec extends StreamSpec {
       val elems = p.within(1.second)((1 to 1000).map(i ⇒ p.requestNext()).toSet)
       p.expectComplete()
       elems should ===((0 until 1000).toSet)
+    }
+
+    val attributesSource = Source.fromGraph(
+      new GraphStage[SourceShape[Attributes]] {
+        val out = Outlet[Attributes]("AttributesSource.out")
+        override val shape: SourceShape[Attributes] = SourceShape(out)
+        override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
+          override def onPull(): Unit = {
+            push(out, inheritedAttributes)
+            completeStage()
+          }
+          setHandler(out, this)
+        }
+      })
+
+    "propagate attributes to inner streams" in assertAllStagesStopped {
+      val f = Source.single(attributesSource.addAttributes(Attributes.name("inner")))
+        .flatMapMerge(1, identity)
+        .addAttributes(Attributes.name("outer"))
+        .runWith(Sink.head)
+
+      val attributes = Await.result(f, 3.seconds).attributeList
+      attributes should contain(Attributes.Name("inner"))
+      attributes should contain(Attributes.Name("outer"))
+      attributes.indexOf(Attributes.Name("inner")) < attributes.indexOf(Attributes.Name("outer")) should be(true)
     }
 
   }

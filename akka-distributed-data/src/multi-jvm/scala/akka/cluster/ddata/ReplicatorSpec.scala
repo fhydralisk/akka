@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata
 
 import scala.concurrent.duration._
@@ -22,6 +23,7 @@ object ReplicatorSpec extends MultiNodeConfig {
     akka.loglevel = INFO
     akka.actor.provider = "cluster"
     akka.log-dead-letters-during-shutdown = off
+    #akka.cluster.distributed-data.delta-crdt.enabled = off
     """))
 
   testTransport(on = true)
@@ -57,7 +59,7 @@ class ReplicatorSpec extends MultiNodeSpec(ReplicatorSpec) with STMultiNodeSpec 
   val KeyE2 = GCounterKey("E2")
   val KeyF = GCounterKey("F")
   val KeyG = ORSetKey[String]("G")
-  val KeyH = ORMapKey[Flag]("H")
+  val KeyH = ORMapKey[String, Flag]("H")
   val KeyI = GSetKey[String]("I")
   val KeyJ = GSetKey[String]("J")
   val KeyX = GCounterKey("X")
@@ -136,17 +138,17 @@ class ReplicatorSpec extends MultiNodeSpec(ReplicatorSpec) with STMultiNodeSpec 
         replicator ! Update(KeyX, GCounter(), WriteLocal)(_ + 9)
         expectMsg(UpdateSuccess(KeyX, None))
         changedProbe.expectMsg(Changed(KeyX)(c9)).dataValue should be(c9)
-        replicator ! Delete(KeyX, WriteLocal)
-        expectMsg(DeleteSuccess(KeyX))
-        changedProbe.expectMsg(DataDeleted(KeyX))
-        replicator ! Get(KeyX, ReadLocal)
-        expectMsg(DataDeleted(KeyX))
-        replicator ! Get(KeyX, readAll)
-        expectMsg(DataDeleted(KeyX))
-        replicator ! Update(KeyX, GCounter(), WriteLocal)(_ + 1)
-        expectMsg(DataDeleted(KeyX))
-        replicator ! Delete(KeyX, WriteLocal)
-        expectMsg(DataDeleted(KeyX))
+        replicator ! Delete(KeyX, WriteLocal, Some(777))
+        expectMsg(DeleteSuccess(KeyX, Some(777)))
+        changedProbe.expectMsg(Deleted(KeyX))
+        replicator ! Get(KeyX, ReadLocal, Some(789))
+        expectMsg(DataDeleted(KeyX, Some(789)))
+        replicator ! Get(KeyX, readAll, Some(456))
+        expectMsg(DataDeleted(KeyX, Some(456)))
+        replicator ! Update(KeyX, GCounter(), WriteLocal, Some(123))(_ + 1)
+        expectMsg(DataDeleted(KeyX, Some(123)))
+        replicator ! Delete(KeyX, WriteLocal, Some(555))
+        expectMsg(DataDeleted(KeyX, Some(555)))
 
         replicator ! GetKeyIds
         expectMsg(GetKeyIdsResult(Set("A")))
@@ -288,8 +290,8 @@ class ReplicatorSpec extends MultiNodeSpec(ReplicatorSpec) with STMultiNodeSpec 
       expectMsg(UpdateSuccess(KeyC, None))
       changedProbe.expectMsgPF() { case c @ Changed(KeyC) ⇒ c.get(KeyC).value } should be(31)
 
-      replicator ! Delete(KeyY, WriteLocal)
-      expectMsg(DeleteSuccess(KeyY))
+      replicator ! Delete(KeyY, WriteLocal, Some(777))
+      expectMsg(DeleteSuccess(KeyY, Some(777)))
 
       replicator ! Get(KeyZ, readMajority)
       expectMsgPF() { case g @ GetSuccess(KeyZ, _) ⇒ g.get(KeyZ).value } should be(30)
@@ -304,8 +306,8 @@ class ReplicatorSpec extends MultiNodeSpec(ReplicatorSpec) with STMultiNodeSpec 
           val c = expectMsgPF() { case g @ GetSuccess(KeyC, _) ⇒ g.get(KeyC) }
           c.value should be(31)
 
-          replicator ! Get(KeyY, ReadLocal)
-          expectMsg(DataDeleted(KeyY))
+          replicator ! Get(KeyY, ReadLocal, Some(777))
+          expectMsg(DataDeleted(KeyY, Some(777)))
         }
       }
       changedProbe.expectMsgPF() { case c @ Changed(KeyC) ⇒ c.get(KeyC).value } should be(31)
@@ -526,22 +528,22 @@ class ReplicatorSpec extends MultiNodeSpec(ReplicatorSpec) with STMultiNodeSpec 
 
     runOn(second) {
       replicator ! Subscribe(KeyH, changedProbe.ref)
-      replicator ! Update(KeyH, ORMap.empty[Flag], writeTwo)(_ + ("a" → Flag(enabled = false)))
-      changedProbe.expectMsgPF() { case c @ Changed(KeyH) ⇒ c.get(KeyH).entries } should be(Map("a" → Flag(enabled = false)))
+      replicator ! Update(KeyH, ORMap.empty[String, Flag], writeTwo)(_ + ("a" → Flag.Disabled))
+      changedProbe.expectMsgPF() { case c @ Changed(KeyH) ⇒ c.get(KeyH).entries } should be(Map("a" → Flag.Disabled))
     }
 
     enterBarrier("update-h1")
 
     runOn(first) {
-      replicator ! Update(KeyH, ORMap.empty[Flag], writeTwo)(_ + ("a" → Flag(enabled = true)))
+      replicator ! Update(KeyH, ORMap.empty[String, Flag], writeTwo)(_ + ("a" → Flag.Enabled))
     }
 
     runOn(second) {
-      changedProbe.expectMsgPF() { case c @ Changed(KeyH) ⇒ c.get(KeyH).entries } should be(Map("a" → Flag(enabled = true)))
+      changedProbe.expectMsgPF() { case c @ Changed(KeyH) ⇒ c.get(KeyH).entries } should be(Map("a" → Flag.Enabled))
 
-      replicator ! Update(KeyH, ORMap.empty[Flag], writeTwo)(_ + ("b" → Flag(enabled = true)))
+      replicator ! Update(KeyH, ORMap.empty[String, Flag], writeTwo)(_ + ("b" → Flag.Enabled))
       changedProbe.expectMsgPF() { case c @ Changed(KeyH) ⇒ c.get(KeyH).entries } should be(
-        Map("a" → Flag(enabled = true), "b" → Flag(enabled = true)))
+        Map("a" → Flag.Enabled, "b" → Flag.Enabled))
     }
 
     enterBarrierAfterTestStep()

@@ -1,30 +1,35 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.impl
 
 import akka.actor.ActorLogging
 import akka.actor.Props
 import akka.actor.Status
+import akka.annotation.InternalApi
 import akka.stream.OverflowStrategies._
-import akka.stream.{ BufferOverflowException, OverflowStrategy, OverflowStrategies }
+import akka.stream.{ BufferOverflowException, OverflowStrategies, OverflowStrategy }
 import akka.stream.ActorMaterializerSettings
 
 /**
  * INTERNAL API
  */
-private[akka] object ActorRefSourceActor {
-  def props(bufferSize: Int, overflowStrategy: OverflowStrategy, settings: ActorMaterializerSettings) = {
+@InternalApi private[akka] object ActorRefSourceActor {
+  def props(completionMatcher: PartialFunction[Any, Unit], failureMatcher: PartialFunction[Any, Throwable],
+            bufferSize: Int, overflowStrategy: OverflowStrategy, settings: ActorMaterializerSettings) = {
     require(overflowStrategy != OverflowStrategies.Backpressure, "Backpressure overflowStrategy not supported")
     val maxFixedBufferSize = settings.maxFixedBufferSize
-    Props(new ActorRefSourceActor(bufferSize, overflowStrategy, maxFixedBufferSize))
+    Props(new ActorRefSourceActor(completionMatcher, failureMatcher, bufferSize, overflowStrategy, maxFixedBufferSize))
   }
 }
 
 /**
  * INTERNAL API
  */
-private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: OverflowStrategy, maxFixedBufferSize: Int)
+@InternalApi private[akka] class ActorRefSourceActor(
+  completionMatcher: PartialFunction[Any, Unit], failureMatcher: PartialFunction[Any, Throwable],
+  bufferSize: Int, overflowStrategy: OverflowStrategy, maxFixedBufferSize: Int)
   extends akka.stream.actor.ActorPublisher[Any] with ActorLogging {
   import akka.stream.actor.ActorPublisherMessage._
 
@@ -34,15 +39,21 @@ private[akka] class ActorRefSourceActor(bufferSize: Int, overflowStrategy: Overf
   def receive = ({
     case Cancel ⇒
       context.stop(self)
+  }: Receive)
+    .orElse(requestElem)
+    .orElse(receiveFailure)
+    .orElse(receiveComplete)
+    .orElse(receiveElem)
 
-    case _: Status.Success ⇒
-      if (bufferSize == 0 || buffer.isEmpty) context.stop(self) // will complete the stream successfully
-      else context.become(drainBufferThenComplete)
+  def receiveComplete: Receive = completionMatcher.andThen { _ ⇒
+    if (bufferSize == 0 || buffer.isEmpty) context.stop(self) // will complete the stream successfully
+    else context.become(drainBufferThenComplete)
+  }
 
-    case Status.Failure(cause) if isActive ⇒
+  def receiveFailure: Receive = failureMatcher.andThen { cause ⇒
+    if (isActive)
       onErrorThenStop(cause)
-
-  }: Receive).orElse(requestElem).orElse(receiveElem)
+  }
 
   def requestElem: Receive = {
     case _: Request ⇒

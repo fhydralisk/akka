@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.routing
 
 import scala.concurrent.Await
@@ -80,7 +81,7 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
   }
 
   "A cluster router with a consistent hashing pool" must {
-    "start cluster with 2 nodes" taggedAs LongRunningTest in {
+    "start cluster with 2 nodes" in {
       awaitClusterUp(first, second)
       enterBarrier("after-1")
     }
@@ -105,7 +106,7 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
       enterBarrier("after-2")
     }
 
-    "deploy routees to new member nodes in the cluster" taggedAs LongRunningTest in {
+    "deploy routees to new member nodes in the cluster" in {
 
       awaitClusterUp(first, second, third)
 
@@ -119,12 +120,12 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
       enterBarrier("after-3")
     }
 
-    "deploy programatically defined routees to the member nodes in the cluster" taggedAs LongRunningTest in {
+    "deploy programatically defined routees to the member nodes in the cluster" in {
       runOn(first) {
         val router2 = system.actorOf(
           ClusterRouterPool(
             local = ConsistentHashingPool(nrOfInstances = 0),
-            settings = ClusterRouterPoolSettings(totalInstances = 10, maxInstancesPerNode = 2, allowLocalRoutees = true, useRole = None)).
+            settings = ClusterRouterPoolSettings(totalInstances = 10, maxInstancesPerNode = 2, allowLocalRoutees = true)).
             props(Props[Echo]),
           "router2")
         // it may take some time until router receives cluster member events
@@ -136,7 +137,7 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
       enterBarrier("after-4")
     }
 
-    "handle combination of configured router and programatically defined hashMapping" taggedAs LongRunningTest in {
+    "handle combination of configured router and programatically defined hashMapping" in {
       runOn(first) {
         def hashMapping: ConsistentHashMapping = {
           case s: String ⇒ s
@@ -150,7 +151,7 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
       enterBarrier("after-5")
     }
 
-    "handle combination of configured router and programatically defined hashMapping and ClusterRouterConfig" taggedAs LongRunningTest in {
+    "handle combination of configured router and programatically defined hashMapping and ClusterRouterConfig" in {
       runOn(first) {
         def hashMapping: ConsistentHashMapping = {
           case s: String ⇒ s
@@ -159,7 +160,7 @@ abstract class ClusterConsistentHashingRouterSpec extends MultiNodeSpec(ClusterC
         val router4 = system.actorOf(
           ClusterRouterPool(
             local = ConsistentHashingPool(nrOfInstances = 0, hashMapping = hashMapping),
-            settings = ClusterRouterPoolSettings(totalInstances = 10, maxInstancesPerNode = 1, allowLocalRoutees = true, useRole = None)).
+            settings = ClusterRouterPoolSettings(totalInstances = 10, maxInstancesPerNode = 1, allowLocalRoutees = true)).
             props(Props[Echo]),
           "router4")
 

@@ -1,10 +1,11 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.NotUsed
-import akka.stream.impl.ConstantFun
+import akka.util.ConstantFun
 
 import scala.util.control.NoStackTrace
 import akka.stream.ActorMaterializer

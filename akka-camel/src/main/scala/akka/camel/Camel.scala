@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.camel
@@ -86,6 +86,8 @@ class CamelSettings private[camel] (config: Config, dynamicAccess: DynamicAccess
    * enables or disables streamingCache on the Camel Context
    */
   final val StreamingCache: Boolean = config.getBoolean("akka.camel.streamingCache")
+
+  final val ProducerChildDispatcher: String = config.getString("akka.camel.producer.use-dispatcher")
 
   final val Conversions: (String, RouteDefinition) ⇒ RouteDefinition = {
     val specifiedConversions = {

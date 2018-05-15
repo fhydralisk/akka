@@ -1,13 +1,15 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import java.util.stream.Collectors
+
 import akka.actor.ActorSystem
-import akka.stream.impl.StreamSupervisor.Children
-import akka.stream.impl.{ StreamSupervisor, ActorMaterializerImpl }
 import akka.stream._
+import akka.stream.impl.{ PhasedFusingActorMaterializer, StreamSupervisor }
+import akka.stream.impl.StreamSupervisor.Children
 import akka.stream.testkit.Utils._
 import akka.stream.testkit._
 import akka.stream.testkit.scaladsl.TestSource
@@ -47,13 +49,26 @@ class SinkAsJavaStreamSpec extends StreamSpec(UnboundedMailboxConfig) {
       javaSource.close()
     }
 
+    "allow overriding the dispatcher using Attributes" in Utils.assertAllStagesStopped {
+      val sys = ActorSystem("dispatcher-testing", UnboundedMailboxConfig)
+      val materializer = ActorMaterializer()(sys)
+
+      try {
+        TestSource.probe[ByteString].runWith(StreamConverters.asJavaStream()
+          .addAttributes(ActorAttributes.dispatcher("akka.actor.default-dispatcher")))(materializer)
+        materializer.asInstanceOf[PhasedFusingActorMaterializer].supervisor.tell(StreamSupervisor.GetChildren, testActor)
+        val ref = expectMsgType[Children].children.find(_.path.toString contains "asJavaStream").get
+        assertDispatcher(ref, "akka.actor.default-dispatcher")
+      } finally shutdown(sys)
+    }
+
     "work in separate IO dispatcher" in Utils.assertAllStagesStopped {
       val sys = ActorSystem("dispatcher-testing", UnboundedMailboxConfig)
       val materializer = ActorMaterializer()(sys)
 
       try {
         TestSource.probe[ByteString].runWith(StreamConverters.asJavaStream())(materializer)
-        materializer.asInstanceOf[ActorMaterializerImpl].supervisor.tell(StreamSupervisor.GetChildren, testActor)
+        materializer.asInstanceOf[PhasedFusingActorMaterializer].supervisor.tell(StreamSupervisor.GetChildren, testActor)
         val ref = expectMsgType[Children].children.find(_.path.toString contains "asJavaStream").get
         assertDispatcher(ref, "akka.stream.default-blocking-io-dispatcher")
       } finally shutdown(sys)

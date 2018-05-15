@@ -1,34 +1,63 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport.netty
 
-import akka.actor.{ Address, ExtendedActorSystem }
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.SocketAddress
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.blocking
+import scala.util.Try
+import scala.util.control.NoStackTrace
+import scala.util.control.NonFatal
+
+import akka.actor.ActorSystem
+import akka.actor.Address
+import akka.actor.ExtendedActorSystem
 import akka.dispatch.ThreadPoolConfig
 import akka.event.Logging
+import akka.remote.RARP
 import akka.remote.transport.AssociationHandle.HandleEventListener
 import akka.remote.transport.Transport._
-import akka.remote.transport.netty.NettyTransportSettings.{ Udp, Tcp, Mode }
-import akka.remote.transport.{ AssociationHandle, Transport }
-import akka.{ OnlyCauseStackTrace, ConfigurationException }
-import com.typesafe.config.Config
-import java.net.{ SocketAddress, InetAddress, InetSocketAddress }
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.{ ConcurrentHashMap, Executors, CancellationException }
-import org.jboss.netty.bootstrap.{ ConnectionlessBootstrap, Bootstrap, ClientBootstrap, ServerBootstrap }
-import org.jboss.netty.buffer.{ ChannelBuffers, ChannelBuffer }
-import org.jboss.netty.channel._
-import org.jboss.netty.channel.group.{ DefaultChannelGroup, ChannelGroup, ChannelGroupFuture, ChannelGroupFutureListener }
-import org.jboss.netty.channel.socket.nio.{ NioWorkerPool, NioDatagramChannelFactory, NioServerSocketChannelFactory, NioClientSocketChannelFactory }
-import org.jboss.netty.handler.codec.frame.{ LengthFieldBasedFrameDecoder, LengthFieldPrepender }
-import org.jboss.netty.handler.ssl.SslHandler
-import scala.concurrent.duration.{ FiniteDuration }
-import scala.concurrent.{ ExecutionContext, Promise, Future, blocking }
-import scala.util.{ Try }
-import scala.util.control.{ NoStackTrace, NonFatal }
-import akka.util.Helpers.Requiring
+import akka.remote.transport.netty.NettyTransportSettings.Mode
+import akka.remote.transport.netty.NettyTransportSettings.Tcp
+import akka.remote.transport.netty.NettyTransportSettings.Udp
+import akka.remote.transport.AssociationHandle
+import akka.remote.transport.Transport
 import akka.util.Helpers
-import akka.remote.RARP
+import akka.util.Helpers.Requiring
+import akka.util.OptionVal
+import akka.ConfigurationException
+import akka.OnlyCauseStackTrace
+import com.typesafe.config.Config
+import org.jboss.netty.bootstrap.Bootstrap
+import org.jboss.netty.bootstrap.ClientBootstrap
+import org.jboss.netty.bootstrap.ConnectionlessBootstrap
+import org.jboss.netty.bootstrap.ServerBootstrap
+import org.jboss.netty.buffer.ChannelBuffer
+import org.jboss.netty.buffer.ChannelBuffers
+import org.jboss.netty.channel._
+import org.jboss.netty.channel.group.ChannelGroup
+import org.jboss.netty.channel.group.ChannelGroupFuture
+import org.jboss.netty.channel.group.ChannelGroupFutureListener
+import org.jboss.netty.channel.group.DefaultChannelGroup
+import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory
+import org.jboss.netty.channel.socket.nio.NioDatagramChannelFactory
+import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory
+import org.jboss.netty.channel.socket.nio.NioWorkerPool
+import org.jboss.netty.handler.codec.frame.LengthFieldBasedFrameDecoder
+import org.jboss.netty.handler.codec.frame.LengthFieldPrepender
+import org.jboss.netty.handler.ssl.SslHandler
 import org.jboss.netty.util.HashedWheelTimer
 
 object NettyTransportSettings {
@@ -86,6 +115,8 @@ class NettyTransportSettings(config: Config) {
   }
 
   val EnableSsl: Boolean = getBoolean("enable-ssl") requiring (!_ || TransportMode == Tcp, s"$TransportMode does not support SSL")
+
+  val SSLEngineProviderClassName: String = if (EnableSsl) getString("ssl-engine-provider") else ""
 
   val UseDispatcherForIo: Option[String] = getString("use-dispatcher-for-io") match {
     case "" | null  ⇒ None
@@ -179,8 +210,8 @@ private[netty] trait CommonHandlers extends NettyHelpers {
     NettyTransport.addressFromSocketAddress(channel.getLocalAddress, schemeIdentifier, system.name, Some(settings.Hostname), None) match {
       case Some(localAddress) ⇒
         val handle = createHandle(channel, localAddress, remoteAddress)
-        handle.readHandlerPromise.future.onSuccess {
-          case listener: HandleEventListener ⇒
+        handle.readHandlerPromise.future.foreach {
+          listener ⇒
             registerListener(channel, listener, msg, remoteSocketAddress.asInstanceOf[InetSocketAddress])
             channel.setReadable(true)
         }
@@ -203,11 +234,11 @@ private[netty] abstract class ServerHandler(
 
   final protected def initInbound(channel: Channel, remoteSocketAddress: SocketAddress, msg: ChannelBuffer): Unit = {
     channel.setReadable(false)
-    associationListenerFuture.onSuccess {
-      case listener: AssociationEventListener ⇒
+    associationListenerFuture.foreach {
+      listener ⇒
         val remoteAddress = NettyTransport.addressFromSocketAddress(remoteSocketAddress, transport.schemeIdentifier,
           transport.system.name, hostName = None, port = None).getOrElse(
-          throw new NettyTransportException(s"Unknown inbound remote address type [${remoteSocketAddress.getClass.getName}]"))
+            throw new NettyTransportException(s"Unknown inbound remote address type [${remoteSocketAddress.getClass.getName}]"))
         init(channel, remoteSocketAddress, remoteAddress, msg) { listener notify InboundAssociation(_) }
     }
   }
@@ -280,7 +311,7 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
   @volatile private var boundTo: Address = _
   @volatile private var serverChannel: Channel = _
 
-  private val log = Logging(system, this.getClass)
+  private val log = Logging.withMarker(system, this.getClass)
 
   /**
    * INTERNAL API
@@ -340,10 +371,26 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
 
   private val associationListenerPromise: Promise[AssociationEventListener] = Promise()
 
+  private val sslEngineProvider: OptionVal[SSLEngineProvider] =
+    if (settings.EnableSsl) {
+      OptionVal.Some(system.dynamicAccess.createInstanceFor[SSLEngineProvider](
+        settings.SSLEngineProviderClassName,
+        List((classOf[ActorSystem], system))).recover {
+          case e ⇒ throw new ConfigurationException(
+            s"Could not create SSLEngineProvider [${settings.SSLEngineProviderClassName}]", e)
+        }.get)
+    } else OptionVal.None
+
   private def sslHandler(isClient: Boolean): SslHandler = {
-    val handler = NettySSLSupport(settings.SslSettings.get, log, isClient)
-    handler.setCloseOnSSLException(true)
-    handler
+    sslEngineProvider match {
+      case OptionVal.Some(sslProvider) ⇒
+        val handler = NettySSLSupport(sslProvider, isClient)
+        handler.setCloseOnSSLException(true)
+        handler
+      case OptionVal.None ⇒
+        throw new IllegalStateException("Expected enable-ssl=on")
+    }
+
   }
 
   private val serverPipelineFactory: ChannelPipelineFactory = new ChannelPipelineFactory {
@@ -351,7 +398,7 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
       val pipeline = newPipeline
       if (EnableSsl) pipeline.addFirst("SslHandler", sslHandler(isClient = false))
       val handler = if (isDatagram) new UdpServerHandler(NettyTransport.this, associationListenerPromise.future)
-      else new TcpServerHandler(NettyTransport.this, associationListenerPromise.future)
+      else new TcpServerHandler(NettyTransport.this, associationListenerPromise.future, log)
       pipeline.addLast("ServerHandler", handler)
       pipeline
     }
@@ -363,7 +410,7 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
         val pipeline = newPipeline
         if (EnableSsl) pipeline.addFirst("SslHandler", sslHandler(isClient = true))
         val handler = if (isDatagram) new UdpClientHandler(NettyTransport.this, remoteAddress)
-        else new TcpClientHandler(NettyTransport.this, remoteAddress)
+        else new TcpClientHandler(NettyTransport.this, remoteAddress, log)
         pipeline.addLast("clienthandler", handler)
         pipeline
       }
@@ -432,7 +479,7 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
                 case None          ⇒ throw new NettyTransportException(s"Unknown local address type [${newServerChannel.getLocalAddress.getClass.getName}]")
               }
               localAddress = address
-              associationListenerPromise.future.onSuccess { case listener ⇒ newServerChannel.setReadable(true) }
+              associationListenerPromise.future.foreach { _ ⇒ newServerChannel.setReadable(true) }
               (address, associationListenerPromise)
             case None ⇒ throw new NettyTransportException(s"Unknown local address type [${newServerChannel.getLocalAddress.getClass.getName}]")
           }
@@ -468,10 +515,10 @@ class NettyTransport(val settings: NettyTransportSettings, val system: ExtendedA
         handle ← if (isDatagram)
           Future {
             readyChannel.getRemoteAddress match {
-              case addr: InetSocketAddress ⇒
+              case address: InetSocketAddress ⇒
                 val handle = new UdpAssociationHandle(localAddress, remoteAddress, readyChannel, NettyTransport.this)
-                handle.readHandlerPromise.future.onSuccess {
-                  case listener ⇒ udpConnectionTable.put(addr, listener)
+                handle.readHandlerPromise.future.foreach {
+                  listener ⇒ udpConnectionTable.put(address, listener)
                 }
                 handle
               case unknown ⇒ throw new NettyTransportException(s"Unknown outbound remote address type [${unknown.getClass.getName}]")

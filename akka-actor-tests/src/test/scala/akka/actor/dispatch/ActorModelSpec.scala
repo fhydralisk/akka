@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.dispatch
 
 import language.postfixOps
@@ -115,11 +116,16 @@ object ActorModelSpec {
     val stops = new AtomicLong(0)
 
     def getStats(actorRef: ActorRef) = {
-      val is = new InterceptorStats
-      stats.putIfAbsent(actorRef, is) match {
-        case null  ⇒ is
-        case other ⇒ other
+      stats.get(actorRef) match {
+        case null ⇒
+          val is = new InterceptorStats
+          stats.putIfAbsent(actorRef, is) match {
+            case null  ⇒ is
+            case other ⇒ other
+          }
+        case existing ⇒ existing
       }
+
     }
 
     protected[akka] abstract override def suspend(actor: ActorCell) {
@@ -414,7 +420,7 @@ abstract class ActorModelSpec(config: String) extends AkkaSpec(config) with Defa
         }
       }
       for (run ← 1 to 3) {
-        flood(50000)
+        flood(10000)
         assertDispatcher(dispatcher)(stops = run)
       }
     }

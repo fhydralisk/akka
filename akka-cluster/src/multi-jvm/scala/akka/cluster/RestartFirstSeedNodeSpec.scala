@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -30,6 +31,7 @@ object RestartFirstSeedNodeMultiJvmSpec extends MultiNodeConfig {
     withFallback(ConfigFactory.parseString("""
       akka.cluster.auto-down-unreachable-after = off
       akka.cluster.retry-unsuccessful-join-after = 3s
+      akka.cluster.allow-weakly-up-members = off
       """)).
     withFallback(MultiNodeClusterSpec.clusterConfig))
 }
@@ -55,11 +57,10 @@ abstract class RestartFirstSeedNodeSpec
   lazy val restartedSeed1System = ActorSystem(
     system.name,
     ConfigFactory.parseString(
-      if (RARP(system).provider.remoteSettings.Artery.Enabled)
-        "akka.remote.artery.canonical.port=" + seedNodes.head.port.get
-      else
-        "akka.remote.netty.tcp.port=" + seedNodes.head.port.get
-    ).withFallback(system.settings.config))
+      s"""
+        akka.remote.netty.tcp.port = ${seedNodes.head.port.get}
+        akka.remote.artery.canonical.port = ${seedNodes.head.port.get}
+        """).withFallback(system.settings.config))
 
   override def afterAll(): Unit = {
     runOn(seed1) {

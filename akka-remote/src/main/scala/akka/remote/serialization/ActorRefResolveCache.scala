@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.serialization
 
 import akka.actor.ActorRef
@@ -11,8 +12,8 @@ import akka.actor.Extension
 import akka.actor.ExtensionId
 import akka.actor.ExtensionIdProvider
 import akka.remote.RemoteActorRefProvider
-import akka.remote.artery.FastHash
 import akka.remote.artery.LruBoundedCache
+import akka.util.Unsafe
 
 /**
  * INTERNAL API: Thread local cache per actor system
@@ -58,7 +59,7 @@ private[akka] final class ActorRefResolveCache(provider: RemoteActorRefProvider)
   override protected def compute(k: String): ActorRef =
     provider.internalResolveActorRef(k)
 
-  override protected def hash(k: String): Int = FastHash.ofString(k)
+  override protected def hash(k: String): Int = Unsafe.fastHash(k)
 
   override protected def isCacheable(v: ActorRef): Boolean = !v.isInstanceOf[EmptyLocalActorRef]
 }

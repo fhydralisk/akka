@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.pattern
 
 import scala.concurrent.duration._
@@ -15,13 +16,14 @@ import akka.actor.SupervisorStrategy._
  * with ``akka.pattern.Backoff.onFailure``.
  */
 private class BackoffOnRestartSupervisor(
-  val childProps: Props,
-  val childName:  String,
-  minBackoff:     FiniteDuration,
-  maxBackoff:     FiniteDuration,
-  val reset:      BackoffReset,
-  randomFactor:   Double,
-  strategy:       OneForOneStrategy)
+  val childProps:        Props,
+  val childName:         String,
+  minBackoff:            FiniteDuration,
+  maxBackoff:            FiniteDuration,
+  val reset:             BackoffReset,
+  randomFactor:          Double,
+  strategy:              OneForOneStrategy,
+  val replyWhileStopped: Option[Any])
   extends Actor with HandleBackoff
   with ActorLogging {
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf;
@@ -28,7 +28,6 @@ import static akka.actor.SupervisorStrategy.Directive;
  * }
  * </pre>
  *
- * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
  */
 public class DeciderBuilder {
   private DeciderBuilder() {

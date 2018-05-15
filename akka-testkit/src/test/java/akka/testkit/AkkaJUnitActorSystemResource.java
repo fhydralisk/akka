@@ -1,10 +1,12 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit;
 
 import akka.actor.ActorSystem;
 
+import akka.testkit.javadsl.TestKit;
 import com.typesafe.config.Config;
 import org.junit.rules.ExternalResource;
 
@@ -80,7 +82,7 @@ public class AkkaJUnitActorSystemResource extends ExternalResource {
 
   @Override
   protected void after() {
-    JavaTestKit.shutdownActorSystem(system);
+    TestKit.shutdownActorSystem(system);
     system = null;
   }
 

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.actor.Terminated
@@ -20,7 +21,7 @@ class NewRemoteActorMultiJvmSpec(artery: Boolean) extends MultiNodeConfig {
     ConfigFactory.parseString(s"""
       akka.remote.log-remote-lifecycle-events = off
       akka.remote.artery.enabled = $artery
-      """).withFallback(RemotingMultiNodeSpec.arteryFlightRecordingConf)))
+      """).withFallback(RemotingMultiNodeSpec.commonConfig)))
 
   val master = role("master")
   val slave = role("slave")

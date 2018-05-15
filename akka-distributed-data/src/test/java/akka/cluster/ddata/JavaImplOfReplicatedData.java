@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata;
 
 import akka.cluster.UniqueAddress;
@@ -11,6 +12,11 @@ public class JavaImplOfReplicatedData extends AbstractReplicatedData<JavaImplOfR
   @Override
   public JavaImplOfReplicatedData mergeData(JavaImplOfReplicatedData other) {
     return this;
+  }
+
+  @Override
+  public scala.collection.immutable.Set<UniqueAddress> modifiedByNodes() {
+    return akka.japi.Util.immutableSeq(new java.util.ArrayList<UniqueAddress>()).toSet();
   }
 
   @Override

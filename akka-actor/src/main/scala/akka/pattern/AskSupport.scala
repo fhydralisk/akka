@@ -1,11 +1,13 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.pattern
 
 import java.util.concurrent.TimeoutException
 
 import akka.actor._
+import akka.annotation.InternalApi
 import akka.dispatch.sysmsg._
 import akka.util.{ Timeout, Unsafe }
 
@@ -438,9 +440,6 @@ private[akka] final class PromiseActorRef private (val provider: ActorRefProvide
   import AbstractPromiseActorRef.{ stateOffset, watchedByOffset }
   import PromiseActorRef._
 
-  @deprecated("Use the full constructor", "2.4")
-  def this(provider: ActorRefProvider, result: Promise[Any]) = this(provider, result, "unknown")
-
   // This is necessary for weaving the PromiseActorRef into the asked message, i.e. the replyTo pattern.
   @volatile var messageClassName = _mcn
 
@@ -530,7 +529,7 @@ private[akka] final class PromiseActorRef private (val provider: ActorRefProvide
   override def !(message: Any)(implicit sender: ActorRef = Actor.noSender): Unit = state match {
     case Stopped | _: StoppedWithPath ⇒ provider.deadLetters ! message
     case _ ⇒
-      if (message == null) throw new InvalidMessageException("Message is null")
+      if (message == null) throw InvalidMessageException("Message is null")
       if (!(result.tryComplete(
         message match {
           case Status.Success(r) ⇒ Success(r)
@@ -587,27 +586,27 @@ private[akka] final class PromiseActorRef private (val provider: ActorRefProvide
 /**
  * INTERNAL API
  */
+@InternalApi
 private[akka] object PromiseActorRef {
   private case object Registering
   private case object Stopped
   private final case class StoppedWithPath(path: ActorPath)
 
-  private val ActorStopResult = Failure(new ActorKilledException("Stopped"))
+  private val ActorStopResult = Failure(ActorKilledException("Stopped"))
+  private val defaultOnTimeout: String ⇒ Throwable = str ⇒ new AskTimeoutException(str)
 
-  def apply(provider: ActorRefProvider, timeout: Timeout, targetName: Any, messageClassName: String, sender: ActorRef = Actor.noSender): PromiseActorRef = {
+  def apply(provider: ActorRefProvider, timeout: Timeout, targetName: Any, messageClassName: String,
+            sender: ActorRef = Actor.noSender, onTimeout: String ⇒ Throwable = defaultOnTimeout): PromiseActorRef = {
     val result = Promise[Any]()
     val scheduler = provider.guardian.underlying.system.scheduler
     val a = new PromiseActorRef(provider, result, messageClassName)
     implicit val ec = a.internalCallingThreadExecutionContext
     val f = scheduler.scheduleOnce(timeout.duration) {
       result tryComplete Failure(
-        new AskTimeoutException(s"""Ask timed out on [$targetName] after [${timeout.duration.toMillis} ms]. Sender[$sender] sent message of type "${a.messageClassName}"."""))
+        onTimeout(s"""Ask timed out on [$targetName] after [${timeout.duration.toMillis} ms]. Sender[$sender] sent message of type "${a.messageClassName}"."""))
     }
     result.future onComplete { _ ⇒ try a.stop() finally f.cancel() }
     a
   }
 
-  @deprecated("Use apply with messageClassName and sender parameters", "2.4")
-  def apply(provider: ActorRefProvider, timeout: Timeout, targetName: String): PromiseActorRef =
-    apply(provider, timeout, targetName, "unknown", Actor.noSender)
 }

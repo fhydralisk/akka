@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import language.postfixOps
@@ -27,7 +28,7 @@ class RemoteQuarantinePiercingConfig(artery: Boolean) extends MultiNodeConfig {
       akka.loglevel = INFO
       akka.remote.log-remote-lifecycle-events = INFO
       akka.remote.artery.enabled = $artery
-      """)).withFallback(RemotingMultiNodeSpec.arteryFlightRecordingConf))
+      """)).withFallback(RemotingMultiNodeSpec.commonConfig))
 
 }
 
@@ -103,7 +104,7 @@ abstract class RemoteQuarantinePiercingSpec(multiNodeConfig: RemoteQuarantinePie
       }
 
       runOn(second) {
-        val addr = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
+        val address = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
         system.actorOf(Props[Subject], "subject")
         enterBarrier("actors-started")
 
@@ -112,8 +113,8 @@ abstract class RemoteQuarantinePiercingSpec(multiNodeConfig: RemoteQuarantinePie
         Await.ready(system.whenTerminated, 30.seconds)
 
         val freshSystem = ActorSystem(system.name, ConfigFactory.parseString(s"""
-          akka.remote.netty.tcp.port = ${addr.port.get}
-          akka.remote.artery.canonical.port = ${addr.port.get}
+          akka.remote.netty.tcp.port = ${address.port.get}
+          akka.remote.artery.canonical.port = ${address.port.get}
           """).withFallback(system.settings.config))
         freshSystem.actorOf(Props[Subject], "subject")
 

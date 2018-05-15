@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -153,7 +153,7 @@ private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAcce
   def deploy(d: Deploy): Unit = {
     @tailrec def add(path: Array[String], d: Deploy, w: WildcardIndex[Deploy] = deployments.get): Unit = {
       for (i ← path.indices) path(i) match {
-        case "" ⇒ throw new InvalidActorNameException(s"Actor name in deployment [${d.path}] must not be empty")
+        case "" ⇒ throw InvalidActorNameException(s"Actor name in deployment [${d.path}] must not be empty")
         case el ⇒ ActorPath.validatePathElement(el, fullPath = d.path)
       }
 

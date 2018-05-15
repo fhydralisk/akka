@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.persistence
 
 import akka.actor.{ ActorLogging, ActorRef, Props }
@@ -22,8 +26,9 @@ object SnapshotRecoveryLocalStoreSpec {
   }
 
   class LoadSnapshotTestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name)
-    with TurnOffRecoverOnStart
     with ActorLogging {
+
+    override def recovery = Recovery(toSequenceNr = 0)
 
     def receiveCommand = {
       case _ ⇒

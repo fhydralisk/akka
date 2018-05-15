@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  * Copyright (C) 2012-2016 Eligotech BV.
  */
 
@@ -100,7 +100,8 @@ private[persistence] trait LeveldbRecovery extends AsyncRecovery { this: Leveldb
     }
 
     withIterator { iter ⇒
-      val startKey = Key(tagNid, if (fromSequenceNr < 1L) 1L else fromSequenceNr, 0)
+      // fromSequenceNr is exclusive, i.e. start with +1
+      val startKey = Key(tagNid, if (fromSequenceNr < 1L) 1L else fromSequenceNr + 1, 0)
       iter.seek(keyToBytes(startKey))
       go(iter, startKey, 0L, replayCallback)
     }

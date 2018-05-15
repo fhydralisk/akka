@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import scala.collection.immutable
@@ -25,7 +26,10 @@ object RestartNode3MultiJvmSpec extends MultiNodeConfig {
   val third = role("third")
 
   commonConfig(debugConfig(on = false).
-    withFallback(ConfigFactory.parseString("akka.cluster.auto-down-unreachable-after = off")).
+    withFallback(ConfigFactory.parseString("""
+      akka.cluster.auto-down-unreachable-after = off
+      akka.cluster.allow-weakly-up-members = off
+      """)).
     withFallback(MultiNodeClusterSpec.clusterConfig))
 
   testTransport(on = true)
@@ -51,11 +55,10 @@ abstract class RestartNode3Spec
   lazy val restartedSecondSystem = ActorSystem(
     system.name,
     ConfigFactory.parseString(
-      if (RARP(system).provider.remoteSettings.Artery.Enabled)
-        "akka.remote.artery.canonical.port=" + secondUniqueAddress.address.port.get
-      else
-        "akka.remote.netty.tcp.port=" + secondUniqueAddress.address.port.get
-    ).withFallback(system.settings.config))
+      s"""
+        akka.remote.artery.canonical.port = ${secondUniqueAddress.address.port.get}
+        akka.remote.netty.tcp.port = ${secondUniqueAddress.address.port.get}
+        """).withFallback(system.settings.config))
 
   override def afterAll(): Unit = {
     runOn(second) {

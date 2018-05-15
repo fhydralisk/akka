@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.util
@@ -12,7 +12,7 @@ import scala.annotation.{ tailrec, varargs }
 import scala.collection.IndexedSeqOptimized
 import scala.collection.mutable.{ Builder, WrappedArray }
 import scala.collection.immutable
-import scala.collection.immutable.{ IndexedSeq, VectorBuilder, VectorIterator }
+import scala.collection.immutable.{ IndexedSeq, VectorBuilder }
 import scala.collection.generic.CanBuildFrom
 import scala.reflect.ClassTag
 import java.nio.charset.{ Charset, StandardCharsets }
@@ -43,7 +43,7 @@ object ByteString {
   /**
    * Creates a new ByteString by encoding a String as UTF-8.
    */
-  def apply(string: String): ByteString = apply(string, UTF_8)
+  def apply(string: String): ByteString = apply(string, StandardCharsets.UTF_8)
 
   /**
    * Creates a new ByteString by encoding a String with a charset.
@@ -51,9 +51,32 @@ object ByteString {
   def apply(string: String, charset: String): ByteString = CompactByteString(string, charset)
 
   /**
+   * Creates a new ByteString by encoding a String with a charset.
+   */
+  def apply(string: String, charset: Charset): ByteString = CompactByteString(string, charset)
+
+  /**
    * Creates a new ByteString by copying a byte array.
    */
   def fromArray(array: Array[Byte]): ByteString = apply(array)
+
+  /**
+   * Unsafe API: Use only in situations you are completely confident that this is what
+   * you need, and that you understand the implications documented below.
+   *
+   * Creates a ByteString without copying the passed in byte array, unlike other factory
+   * methods defined on ByteString. This method of creating a ByteString saves one array
+   * copy and allocation and therefore can lead to better performance, however it also means
+   * that one MUST NOT modify the passed in array, or unexpected immutable data structure
+   * contract-breaking behavior will manifest itself.
+   *
+   * This API is intended for users who have obtained an byte array from some other API, and
+   * want wrap it into an ByteArray, and from there on only use that reference (the ByteString)
+   * to operate on the wrapped data. For all other intents and purposes, please use the usual
+   * apply and create methods - which provide the immutability guarantees by copying the array.
+   *
+   */
+  def fromArrayUnsafe(array: Array[Byte]): ByteString = ByteString1C(array)
 
   /**
    * Creates a new ByteString by copying length bytes starting at offset from
@@ -61,6 +84,24 @@ object ByteString {
    */
   def fromArray(array: Array[Byte], offset: Int, length: Int): ByteString =
     CompactByteString.fromArray(array, offset, length)
+
+  /**
+   * Unsafe API: Use only in situations you are completely confident that this is what
+   * you need, and that you understand the implications documented below.
+   *
+   * Creates a ByteString without copying the passed in byte array, unlike other factory
+   * methods defined on ByteString. This method of creating a ByteString saves one array
+   * copy and allocation and therefore can lead to better performance, however it also means
+   * that one MUST NOT modify the passed in array, or unexpected immutable data structure
+   * contract-breaking behavior will manifest itself.
+   *
+   * This API is intended for users who have obtained an byte array from some other API, and
+   * want wrap it into an ByteArray, and from there on only use that reference (the ByteString)
+   * to operate on the wrapped data. For all other intents and purposes, please use the usual
+   * apply and create methods - which provide the immutability guarantees by copying the array.
+   *
+   */
+  def fromArrayUnsafe(array: Array[Byte], offset: Int, length: Int): ByteString = ByteString1(array, offset, length)
 
   /**
    * JAVA API
@@ -79,6 +120,11 @@ object ByteString {
    * Creates a new ByteString which will contain the representation of the given String in the given charset
    */
   def fromString(string: String, charset: String): ByteString = apply(string, charset)
+
+  /**
+   * Creates a new ByteString which will contain the representation of the given String in the given charset
+   */
+  def fromString(string: String, charset: Charset): ByteString = apply(string, charset)
 
   /**
    * Standard "UTF-8" charset
@@ -459,8 +505,7 @@ object ByteString {
 
     def decodeString(charset: String): String = compact.decodeString(charset)
 
-    def decodeString(charset: Charset): String =
-      compact.decodeString(charset)
+    def decodeString(charset: Charset): String = compact.decodeString(charset)
 
     private[akka] def writeToOutputStream(os: ObjectOutputStream): Unit = {
       os.writeInt(bytestrings.length)
@@ -487,20 +532,28 @@ object ByteString {
     }
 
     override def dropRight(n: Int): ByteString =
-      if (n <= 0) this
-      else {
-        val last = bytestrings.last
-        if (n < last.length) new ByteStrings(bytestrings.init :+ last.dropRight1(n), length - n)
-        else {
-          val remaining = bytestrings.init
-          if (remaining.isEmpty) ByteString.empty
-          else {
-            val s = new ByteStrings(remaining, length - last.length)
-            val remainingToBeDropped = n - last.length
-            s.dropRight(remainingToBeDropped)
-          }
+      if (0 < n && n < length) dropRight0(n)
+      else if (n >= length) ByteString.empty
+      else this
+
+    private def dropRight0(n: Int): ByteString = {
+      val byteStringsSize = bytestrings.length
+      @tailrec def dropRightWithFullDropsAndRemainig(fullDrops: Int, remainingToDrop: Int): ByteString = {
+        val bs = bytestrings(byteStringsSize - fullDrops - 1)
+        if (bs.length > remainingToDrop) {
+          if (fullDrops == byteStringsSize - 1)
+            bytestrings(0).dropRight(remainingToDrop)
+          else if (remainingToDrop == 0)
+            new ByteStrings(bytestrings.dropRight(fullDrops), length - n)
+          else
+            new ByteStrings(bytestrings.dropRight(fullDrops + 1) :+ bytestrings(byteStringsSize - fullDrops - 1).dropRight1(remainingToDrop), length - n)
+        } else {
+          dropRightWithFullDropsAndRemainig(fullDrops + 1, remainingToDrop - bs.length)
         }
       }
+
+      dropRightWithFullDropsAndRemainig(0, n)
+    }
 
     override def slice(from: Int, until: Int): ByteString =
       if (from <= 0 && until >= length) this
@@ -605,13 +658,16 @@ object ByteString {
 sealed abstract class ByteString extends IndexedSeq[Byte] with IndexedSeqOptimized[Byte, ByteString] {
   def apply(idx: Int): Byte
   private[akka] def byteStringCompanion: ByteString.Companion
+  // override so that toString will also be `ByteString(...)` for the concrete subclasses
+  // of ByteString which changed for Scala 2.12, see https://github.com/akka/akka/issues/21774
+  override final def stringPrefix: String = "ByteString"
 
   override protected[this] def newBuilder: ByteStringBuilder = ByteString.newBuilder
 
   // *must* be overridden by derived classes. This construction is necessary
   // to specialize the return type, as the method is already implemented in
   // a parent trait.
-  // 
+  //
   // Avoid `iterator` in performance sensitive code, call ops directly on ByteString instead
   override def iterator: ByteIterator = throw new UnsupportedOperationException("Method iterator is not implemented in ByteString")
 
@@ -686,7 +742,7 @@ sealed abstract class ByteString extends IndexedSeq[Byte] with IndexedSeqOptimiz
    * @param buffer a ByteBuffer to copy bytes to
    * @return the number of bytes actually copied
    */
-  // *must* be overridden by derived classes. 
+  // *must* be overridden by derived classes.
   def copyToBuffer(buffer: ByteBuffer): Int = throw new UnsupportedOperationException("Method copyToBuffer is not implemented in ByteString")
 
   /**
@@ -735,7 +791,7 @@ sealed abstract class ByteString extends IndexedSeq[Byte] with IndexedSeqOptimiz
   /**
    * Decodes this ByteString as a UTF-8 encoded String.
    */
-  final def utf8String: String = decodeString(ByteString.UTF_8)
+  final def utf8String: String = decodeString(StandardCharsets.UTF_8)
 
   /**
    * Decodes this ByteString using a charset to produce a String.
@@ -797,12 +853,18 @@ object CompactByteString {
   /**
    * Creates a new CompactByteString by encoding a String as UTF-8.
    */
-  def apply(string: String): CompactByteString = apply(string, ByteString.UTF_8)
+  def apply(string: String): CompactByteString = apply(string, StandardCharsets.UTF_8)
 
   /**
    * Creates a new CompactByteString by encoding a String with a charset.
    */
   def apply(string: String, charset: String): CompactByteString =
+    if (string.isEmpty) empty else ByteString.ByteString1C(string.getBytes(charset))
+
+  /**
+   * Creates a new CompactByteString by encoding a String with a charset.
+   */
+  def apply(string: String, charset: Charset): CompactByteString =
     if (string.isEmpty) empty else ByteString.ByteString1C(string.getBytes(charset))
 
   /**

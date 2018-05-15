@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import scala.collection.immutable
@@ -28,9 +29,10 @@ object RestartNode2SpecMultiJvmSpec extends MultiNodeConfig {
     withFallback(ConfigFactory.parseString("""
       akka.cluster.auto-down-unreachable-after = 2s
       akka.cluster.retry-unsuccessful-join-after = 3s
+      akka.cluster.allow-weakly-up-members = off
       akka.remote.retry-gate-closed-for = 45s
       akka.remote.log-remote-lifecycle-events = INFO
-                                           """)).
+      """)).
     withFallback(MultiNodeClusterSpec.clusterConfig))
 
 }
@@ -56,10 +58,10 @@ abstract class RestartNode2SpecSpec
     system.name,
     ConfigFactory.parseString(
       s"""
-      akka.remote.netty.tcp.port= ${seedNodes.head.port.get}
+      akka.remote.netty.tcp.port = ${seedNodes.head.port.get}
+      akka.remote.artery.canonical.port = ${seedNodes.head.port.get}
       #akka.remote.retry-gate-closed-for = 1s
-    """).
-      withFallback(system.settings.config))
+      """).withFallback(system.settings.config))
 
   override def afterAll(): Unit = {
     runOn(seed1) {

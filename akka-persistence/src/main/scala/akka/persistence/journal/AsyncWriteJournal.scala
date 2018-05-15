@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  * Copyright (C) 2012-2016 Eligotech BV.
  */
 
@@ -15,7 +15,6 @@ import scala.concurrent.Future
 import scala.util.{ Failure, Success, Try }
 import scala.util.control.NonFatal
 import akka.pattern.CircuitBreaker
-import java.util.Locale
 
 /**
  * Abstract journal, optimized for asynchronous, non-blocking writes.
@@ -43,7 +42,7 @@ trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
       case "fail"                  ⇒ ReplayFilter.Fail
       case "warn"                  ⇒ ReplayFilter.Warn
       case other ⇒ throw new IllegalArgumentException(
-        s"invalid replay-filter.mode [$other], supported values [off, repair, fail, warn]")
+        s"invalid replay-filter.mode [$other], supported values [off, repair-by-discard-old, fail, warn]")
     }
   private def isReplayFilterEnabled: Boolean = replayFilterMode != ReplayFilter.Disabled
   private val replayFilterWindowSize: Int = config.getInt("replay-filter.window-size")
@@ -130,6 +129,11 @@ trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
           else persistentActor
 
         val readHighestSequenceNrFrom = math.max(0L, fromSequenceNr - 1)
+        /*
+         * The API docs for the [[AsyncRecovery]] say not to rely on asyncReadHighestSequenceNr
+         * being called before a call to asyncReplayMessages even tho it currently always is. The Cassandra
+         * plugin does rely on this so if you change this change the Cassandra plugin.
+         */
         breaker.withCircuitBreaker(asyncReadHighestSequenceNr(persistenceId, readHighestSequenceNrFrom))
           .flatMap { highSeqNr ⇒
             val toSeqNr = math.min(toSequenceNr, highSeqNr)
@@ -150,8 +154,8 @@ trait AsyncWriteJournal extends Actor with WriteJournalBase with AsyncRecovery {
             highSeqNr ⇒ RecoverySuccess(highSeqNr)
           }.recover {
             case e ⇒ ReplayMessagesFailure(e)
-          }.pipeTo(replyTo).onSuccess {
-            case _ ⇒ if (publish) context.system.eventStream.publish(r)
+          }.pipeTo(replyTo).foreach {
+            _ ⇒ if (publish) context.system.eventStream.publish(r)
           }
 
       case d @ DeleteMessagesTo(persistenceId, toSequenceNr, persistentActor) ⇒

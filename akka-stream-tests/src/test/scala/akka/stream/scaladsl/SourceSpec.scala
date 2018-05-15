@@ -1,20 +1,22 @@
 /**
- * Copyright (C) 2014-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.testkit.DefaultTimeout
-import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.time.{ Span, Millis }
-import scala.concurrent.{ Future, Await }
+import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
-import scala.util.Failure
-import scala.util.control.NoStackTrace
 import akka.stream._
 import akka.stream.testkit._
 import akka.NotUsed
 import akka.testkit.EventFilter
 import scala.collection.immutable
+import java.util
+import java.util.stream.BaseStream
+
+import akka.stream.testkit.scaladsl.TestSink
 
 class SourceSpec extends StreamSpec with DefaultTimeout {
 
@@ -46,7 +48,6 @@ class SourceSpec extends StreamSpec with DefaultTimeout {
       p.subscribe(c2)
       c2.expectSubscriptionAndError()
     }
-
   }
 
   "Empty Source" must {
@@ -61,79 +62,6 @@ class SourceSpec extends StreamSpec with DefaultTimeout {
       p.subscribe(c2)
       c2.expectSubscriptionAndError()
     }
-  }
-
-  "Failed Source" must {
-    "emit error immediately" in {
-      val ex = new RuntimeException with NoStackTrace
-      val p = Source.failed(ex).runWith(Sink.asPublisher(false))
-      val c = TestSubscriber.manualProbe[Int]()
-      p.subscribe(c)
-      c.expectSubscriptionAndError(ex)
-
-      // reject additional subscriber
-      val c2 = TestSubscriber.manualProbe[Int]()
-      p.subscribe(c2)
-      c2.expectSubscriptionAndError()
-    }
-  }
-
-  "Maybe Source" must {
-    "complete materialized future with None when stream cancels" in Utils.assertAllStagesStopped {
-      val neverSource = Source.maybe[Int]
-      val pubSink = Sink.asPublisher[Int](false)
-
-      val (f, neverPub) = neverSource.toMat(pubSink)(Keep.both).run()
-
-      val c = TestSubscriber.manualProbe[Int]()
-      neverPub.subscribe(c)
-      val subs = c.expectSubscription()
-
-      subs.request(1000)
-      c.expectNoMsg(300.millis)
-
-      subs.cancel()
-      Await.result(f.future, 3.seconds) shouldEqual None
-    }
-
-    "allow external triggering of empty completion" in Utils.assertAllStagesStopped {
-      val neverSource = Source.maybe[Int].filter(_ ⇒ false)
-      val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
-
-      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
-
-      // external cancellation
-      neverPromise.trySuccess(None) shouldEqual true
-
-      Await.result(counterFuture, 3.seconds) shouldEqual 0
-    }
-
-    "allow external triggering of non-empty completion" in Utils.assertAllStagesStopped {
-      val neverSource = Source.maybe[Int]
-      val counterSink = Sink.head[Int]
-
-      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
-
-      // external cancellation
-      neverPromise.trySuccess(Some(6)) shouldEqual true
-
-      Await.result(counterFuture, 3.seconds) shouldEqual 6
-    }
-
-    "allow external triggering of onError" in Utils.assertAllStagesStopped {
-      val neverSource = Source.maybe[Int]
-      val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
-
-      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Keep.both).run()
-
-      // external cancellation
-      neverPromise.failure(new Exception("Boom") with NoStackTrace)
-
-      val ready = Await.ready(counterFuture, 3.seconds)
-      val Failure(ex) = ready.value.get
-      ex.getMessage should include("Boom")
-    }
-
   }
 
   "Composite Source" must {
@@ -213,6 +141,45 @@ class SourceSpec extends StreamSpec with DefaultTimeout {
       out.expectComplete()
     }
 
+    "combine from two inputs with combinedMat and take a materialized value" in {
+      val queueSource = Source.queue[Int](1, OverflowStrategy.dropBuffer)
+      val intSeqSource = Source(1 to 3)
+
+      // compiler to check the correct materialized value of type = SourceQueueWithComplete[Int] available
+      val combined1: Source[Int, SourceQueueWithComplete[Int]] =
+        Source.combineMat(queueSource, intSeqSource)(Concat(_))(Keep.left) //Keep.left (i.e. preserve queueSource's materialized value)
+
+      val (queue1, sinkProbe1) = combined1.toMat(TestSink.probe[Int])(Keep.both).run()
+      sinkProbe1.request(6)
+      queue1.offer(10)
+      queue1.offer(20)
+      queue1.offer(30)
+      queue1.complete() //complete queueSource so that combined1 with `Concat` then pulls elements from intSeqSource
+      sinkProbe1.expectNext(10)
+      sinkProbe1.expectNext(20)
+      sinkProbe1.expectNext(30)
+      sinkProbe1.expectNext(1)
+      sinkProbe1.expectNext(2)
+      sinkProbe1.expectNext(3)
+
+      // compiler to check the correct materialized value of type = SourceQueueWithComplete[Int] available
+      val combined2: Source[Int, SourceQueueWithComplete[Int]] =
+        //queueSource to be the second of combined source
+        Source.combineMat(intSeqSource, queueSource)(Concat(_))(Keep.right) //Keep.right (i.e. preserve queueSource's materialized value)
+
+      val (queue2, sinkProbe2) = combined2.toMat(TestSink.probe[Int])(Keep.both).run()
+      sinkProbe2.request(6)
+      queue2.offer(10)
+      queue2.offer(20)
+      queue2.offer(30)
+      queue2.complete() //complete queueSource so that combined1 with `Concat` then pulls elements from queueSource
+      sinkProbe2.expectNext(1) //as intSeqSource iss the first in combined source, elements from intSeqSource come first
+      sinkProbe2.expectNext(2)
+      sinkProbe2.expectNext(3)
+      sinkProbe2.expectNext(10) //after intSeqSource run out elements, queueSource elements come
+      sinkProbe2.expectNext(20)
+      sinkProbe2.expectNext(30)
+    }
   }
 
   "Repeat Source" must {
@@ -239,11 +206,11 @@ class SourceSpec extends StreamSpec with DefaultTimeout {
       EventFilter[RuntimeException](message = "expected", occurrences = 1) intercept
         whenReady(
           Source.unfold((0, 1)) {
-          case (a, _) if a > 10000000 ⇒ throw t
-          case (a, b)                 ⇒ Some((b, a + b) → a)
-        }.runFold(List.empty[Int]) { case (xs, x) ⇒ x :: xs }.failed) {
-          _ should be theSameInstanceAs (t)
-        }
+            case (a, _) if a > 10000000 ⇒ throw t
+            case (a, b)                 ⇒ Some((b, a + b) → a)
+          }.runFold(List.empty[Int]) { case (xs, x) ⇒ x :: xs }.failed) {
+            _ should be theSameInstanceAs (t)
+          }
     }
 
     "generate a finite fibonacci sequence asynchronously" in {
@@ -365,6 +332,117 @@ class SourceSpec extends StreamSpec with DefaultTimeout {
       }
     }
 
+    "close the underlying stream when completed" in {
+      @volatile var closed = false
+
+      final class EmptyStream[A] extends BaseStream[A, EmptyStream[A]] {
+        override def unordered(): EmptyStream[A] = this
+        override def sequential(): EmptyStream[A] = this
+        override def parallel(): EmptyStream[A] = this
+        override def isParallel: Boolean = false
+
+        override def spliterator(): util.Spliterator[A] = ???
+        override def onClose(closeHandler: Runnable): EmptyStream[A] = ???
+
+        override def iterator(): util.Iterator[A] = new util.Iterator[A] {
+          override def next(): A = ???
+          override def hasNext: Boolean = false
+        }
+
+        override def close(): Unit = closed = true
+      }
+
+      Await.ready(StreamConverters.fromJavaStream(() ⇒ new EmptyStream[Unit]).runWith(Sink.ignore), 3.seconds)
+
+      closed should ===(true)
+    }
+
+    "close the underlying stream when failed" in {
+      @volatile var closed = false
+
+      final class FailingStream[A] extends BaseStream[A, FailingStream[A]] {
+        override def unordered(): FailingStream[A] = this
+        override def sequential(): FailingStream[A] = this
+        override def parallel(): FailingStream[A] = this
+        override def isParallel: Boolean = false
+
+        override def spliterator(): util.Spliterator[A] = ???
+        override def onClose(closeHandler: Runnable): FailingStream[A] = ???
+
+        override def iterator(): util.Iterator[A] = new util.Iterator[A] {
+          override def next(): A = throw new RuntimeException("ouch")
+          override def hasNext: Boolean = true
+        }
+
+        override def close(): Unit = closed = true
+      }
+
+      Await.ready(StreamConverters.fromJavaStream(() ⇒ new FailingStream[Unit]).runWith(Sink.ignore), 3.seconds)
+
+      closed should ===(true)
+    }
   }
 
+  "Source pre-materialization" must {
+
+    "materialize the source and connect it to a publisher" in {
+      val matValPoweredSource = Source.maybe[Int]
+      val (mat, src) = matValPoweredSource.preMaterialize()
+
+      val probe = src.runWith(TestSink.probe[Int])
+
+      probe.request(1)
+      mat.success(Some(42))
+      probe.expectNext(42)
+      probe.expectComplete()
+    }
+
+    "allow for multiple downstream materialized sources" in {
+      val matValPoweredSource = Source.queue[String](Int.MaxValue, OverflowStrategy.fail)
+      val (mat, src) = matValPoweredSource.preMaterialize()
+
+      val probe1 = src.runWith(TestSink.probe[String])
+      val probe2 = src.runWith(TestSink.probe[String])
+
+      probe1.request(1)
+      probe2.request(1)
+      mat.offer("One").futureValue
+      probe1.expectNext("One")
+      probe2.expectNext("One")
+    }
+
+    "survive cancellations of downstream materialized sources" in {
+      val matValPoweredSource = Source.queue[String](Int.MaxValue, OverflowStrategy.fail)
+      val (mat, src) = matValPoweredSource.preMaterialize()
+
+      val probe1 = src.runWith(TestSink.probe[String])
+      src.runWith(Sink.cancelled)
+
+      probe1.request(1)
+      mat.offer("One").futureValue
+      probe1.expectNext("One")
+    }
+
+    "propagate failures to downstream materialized sources" in {
+      val matValPoweredSource = Source.queue[String](Int.MaxValue, OverflowStrategy.fail)
+      val (mat, src) = matValPoweredSource.preMaterialize()
+
+      val probe1 = src.runWith(TestSink.probe[String])
+      val probe2 = src.runWith(TestSink.probe[String])
+
+      mat.fail(new RuntimeException("boom"))
+
+      probe1.expectSubscription()
+      probe2.expectSubscription()
+
+      probe1.expectError().getMessage should ===("boom")
+      probe2.expectError().getMessage should ===("boom")
+    }
+
+    "correctly propagate materialization failures" in {
+      val matValPoweredSource = Source.empty.mapMaterializedValue(_ ⇒ throw new RuntimeException("boom"))
+
+      a[RuntimeException] shouldBe thrownBy(matValPoweredSource.preMaterialize())
+    }
+  }
 }

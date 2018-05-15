@@ -1,16 +1,23 @@
 /**
- * Copyright (C) 2015-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import scala.concurrent.duration._
 import scala.concurrent.duration.FiniteDuration
 import akka.actor.ActorSystem
 import akka.actor.NoSerializationVerificationNeeded
+import akka.annotation.InternalApi
 import com.typesafe.config.Config
+import akka.cluster.Cluster
 import akka.cluster.singleton.ClusterSingletonManagerSettings
 
 object ClusterShardingSettings {
+
+  val StateStoreModePersistence = "persistence"
+  val StateStoreModeDData = "ddata"
+
   /**
    * Create settings from the default configuration
    * `akka.cluster.sharding`.
@@ -33,6 +40,7 @@ object ClusterShardingSettings {
       entityRestartBackoff = config.getDuration("entity-restart-backoff", MILLISECONDS).millis,
       rebalanceInterval = config.getDuration("rebalance-interval", MILLISECONDS).millis,
       snapshotAfter = config.getInt("snapshot-after"),
+      keepNrOfBatches = config.getInt("keep-nr-of-batches"),
       leastShardAllocationRebalanceThreshold =
         config.getInt("least-shard-allocation-strategy.rebalance-threshold"),
       leastShardAllocationMaxSimultaneousRebalance =
@@ -83,6 +91,7 @@ object ClusterShardingSettings {
     val entityRestartBackoff:                               FiniteDuration,
     val rebalanceInterval:                                  FiniteDuration,
     val snapshotAfter:                                      Int,
+    val keepNrOfBatches:                                    Int,
     val leastShardAllocationRebalanceThreshold:             Int,
     val leastShardAllocationMaxSimultaneousRebalance:       Int,
     val waitingForStateTimeout:                             FiniteDuration,
@@ -94,6 +103,44 @@ object ClusterShardingSettings {
     require(
       entityRecoveryStrategy == "all" || entityRecoveryStrategy == "constant",
       s"Unknown 'entity-recovery-strategy' [$entityRecoveryStrategy], valid values are 'all' or 'constant'")
+
+    // included for binary compatibility
+    def this(
+      coordinatorFailureBackoff:                          FiniteDuration,
+      retryInterval:                                      FiniteDuration,
+      bufferSize:                                         Int,
+      handOffTimeout:                                     FiniteDuration,
+      shardStartTimeout:                                  FiniteDuration,
+      shardFailureBackoff:                                FiniteDuration,
+      entityRestartBackoff:                               FiniteDuration,
+      rebalanceInterval:                                  FiniteDuration,
+      snapshotAfter:                                      Int,
+      leastShardAllocationRebalanceThreshold:             Int,
+      leastShardAllocationMaxSimultaneousRebalance:       Int,
+      waitingForStateTimeout:                             FiniteDuration,
+      updatingStateTimeout:                               FiniteDuration,
+      entityRecoveryStrategy:                             String,
+      entityRecoveryConstantRateStrategyFrequency:        FiniteDuration,
+      entityRecoveryConstantRateStrategyNumberOfEntities: Int) = {
+      this(
+        coordinatorFailureBackoff,
+        retryInterval,
+        bufferSize,
+        handOffTimeout,
+        shardStartTimeout,
+        shardFailureBackoff,
+        entityRestartBackoff,
+        rebalanceInterval,
+        snapshotAfter,
+        2,
+        leastShardAllocationRebalanceThreshold,
+        leastShardAllocationMaxSimultaneousRebalance,
+        waitingForStateTimeout,
+        updatingStateTimeout,
+        entityRecoveryStrategy,
+        entityRecoveryConstantRateStrategyFrequency,
+        entityRecoveryConstantRateStrategyNumberOfEntities)
+    }
 
     // included for binary compatibility
     def this(
@@ -125,9 +172,8 @@ object ClusterShardingSettings {
         waitingForStateTimeout,
         updatingStateTimeout,
         "all",
-        100 milliseconds,
-        5
-      )
+        100.milliseconds,
+        5)
     }
   }
 }
@@ -156,9 +202,15 @@ final class ClusterShardingSettings(
   val tuningParameters:             ClusterShardingSettings.TuningParameters,
   val coordinatorSingletonSettings: ClusterSingletonManagerSettings) extends NoSerializationVerificationNeeded {
 
+  import ClusterShardingSettings.{ StateStoreModePersistence, StateStoreModeDData }
   require(
-    stateStoreMode == "persistence" || stateStoreMode == "ddata",
-    s"Unknown 'state-store-mode' [$stateStoreMode], valid values are 'persistence' or 'ddata'")
+    stateStoreMode == StateStoreModePersistence || stateStoreMode == StateStoreModeDData,
+    s"Unknown 'state-store-mode' [$stateStoreMode], valid values are '$StateStoreModeDData' or '$StateStoreModePersistence'")
+
+  /** If true, this node should run the shard region, otherwise just a shard proxy should started on this node. */
+  @InternalApi
+  private[akka] def shouldHostShard(cluster: Cluster): Boolean =
+    role.forall(cluster.selfMember.roles.contains)
 
   def withRole(role: String): ClusterShardingSettings = copy(role = ClusterShardingSettings.roleOption(role))
 

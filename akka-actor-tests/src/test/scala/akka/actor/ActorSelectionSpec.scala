@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.postfixOps
@@ -35,7 +36,7 @@ object ActorSelectionSpec {
 
 }
 
-class ActorSelectionSpec extends AkkaSpec("akka.loglevel=DEBUG") with DefaultTimeout {
+class ActorSelectionSpec extends AkkaSpec with DefaultTimeout {
   import ActorSelectionSpec._
 
   val c1 = system.actorOf(p, "c1")
@@ -118,6 +119,11 @@ class ActorSelectionSpec extends AkkaSpec("akka.loglevel=DEBUG") with DefaultTim
 
       // not equal because it's terminated
       identify(a1.path) should ===(None)
+
+      // wait till path is freed
+      awaitCond {
+        system.asInstanceOf[ExtendedActorSystem].provider.resolveActorRef(a1.path) != a1
+      }
 
       val a2 = system.actorOf(p, name)
       a2.path should ===(a1.path)
@@ -298,7 +304,7 @@ class ActorSelectionSpec extends AkkaSpec("akka.loglevel=DEBUG") with DefaultTim
         case `c2` ⇒ lastSender
       }
       actors should ===(Seq(c21))
-      expectNoMsg(1 second)
+      expectNoMsg(200.millis)
     }
 
     "resolve one actor with explicit timeout" in {

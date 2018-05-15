@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch
@@ -13,6 +13,7 @@ import java.util.concurrent.{ Executor, ExecutorService, Callable }
 import scala.util.{ Try, Success, Failure }
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.CompletableFuture
+import akka.compat
 
 /**
  * ExecutionContexts is the Java API for ExecutionContexts
@@ -127,7 +128,7 @@ object Futures {
    */
   def find[T <: AnyRef](futures: JIterable[Future[T]], predicate: JFunc[T, java.lang.Boolean], executor: ExecutionContext): Future[JOption[T]] = {
     implicit val ec = executor
-    Future.find[T](futures.asScala)(predicate.apply(_))(executor) map JOption.fromScalaOption
+    compat.Future.find[T](futures.asScala)(predicate.apply(_))(executor) map JOption.fromScalaOption
   }
 
   /**
@@ -143,13 +144,13 @@ object Futures {
    * or the result of the fold.
    */
   def fold[T <: AnyRef, R <: AnyRef](zero: R, futures: JIterable[Future[T]], fun: akka.japi.Function2[R, T, R], executor: ExecutionContext): Future[R] =
-    Future.fold(futures.asScala)(zero)(fun.apply)(executor)
+    compat.Future.fold(futures.asScala)(zero)(fun.apply)(executor)
 
   /**
    * Reduces the results of the supplied futures and binary function.
    */
   def reduce[T <: AnyRef, R >: T](futures: JIterable[Future[T]], fun: akka.japi.Function2[R, T, R], executor: ExecutionContext): Future[R] =
-    Future.reduce[T, R](futures.asScala)(fun.apply)(executor)
+    compat.Future.reduce[T, R](futures.asScala)(fun.apply)(executor)
 
   /**
    * Simple version of [[#traverse]]. Transforms a JIterable[Future[A]] into a Future[JIterable[A]].

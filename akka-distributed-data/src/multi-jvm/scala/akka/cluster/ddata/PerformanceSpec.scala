@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2016 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.ddata
 
 import scala.concurrent.Await
@@ -23,7 +24,7 @@ object PerformanceSpec extends MultiNodeConfig {
   val n4 = role("n4")
   val n5 = role("n5")
 
-  commonConfig(ConfigFactory.parseString("""
+  commonConfig(ConfigFactory.parseString(s"""
     akka.loglevel = ERROR
     akka.stdout-loglevel = ERROR
     akka.actor.provider = "cluster"
@@ -34,6 +35,12 @@ object PerformanceSpec extends MultiNodeConfig {
     akka.testconductor.barrier-timeout = 60 s
     akka.cluster.distributed-data.gossip-interval = 1 s
     akka.actor.serialize-messages = off
+
+    #akka.cluster.distributed-data.durable.keys = ["*"]
+    #akka.cluster.distributed-data.durable.lmdb.dir = target/PerformanceSpec-${System.currentTimeMillis}-ddata
+    #akka.cluster.distributed-data.durable.lmdb.write-behind-interval = 200ms
+
+    #akka.cluster.distributed-data.delta-crdt.enabled = off
     """))
 
   def countDownProps(latch: TestLatch): Props = Props(new CountDown(latch)).withDeploy(Deploy.local)
